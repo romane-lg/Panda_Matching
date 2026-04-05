@@ -21,6 +21,11 @@ def _rows(session: Session, sql: str, params: dict[str, Any]) -> list[dict[str, 
     return [dict(row) for row in result.mappings().all()]
 
 
+def _scalar_int(session: Session, sql: str, params: dict[str, Any] | None = None) -> int:
+    row = session.execute(text(sql), params or {}).mappings().one()
+    return int(row["n"])
+
+
 def _relation_exists(session: Session, schema: str, relation: str) -> bool:
     row = session.execute(
         text("SELECT to_regclass(:fq_name) IS NOT NULL AS exists_flag"),
@@ -274,6 +279,97 @@ def _extract_name_from_question(message: str) -> str | None:
         matched = re.match(pattern, message.strip(), flags=re.IGNORECASE)
         if matched:
             return matched.group(1).strip(" ?.")
+    return None
+
+
+def _analytics_chat_response(
+    session: Session,
+    session_id: str,
+    message: str,
+    memory: dict[str, str],
+) -> ChatResponse | None:
+    lower = message.strip().lower()
+
+    eligible_pat = re.match(r"^(?:how many|count)\s+eligible\s+pandas\??$", lower)
+    if eligible_pat:
+        relation = _pick_relation(session, "core", ["breedeable_pandas", "breedable_pandas"])
+        total = _scalar_int(session, f"SELECT COUNT(*) AS n FROM core.{relation}")
+        return ChatResponse(
+            session_id=session_id,
+            intent="analytics_count_eligible",
+            response=f"There are {total} eligible pandas in core.{relation}.",
+            data={"relation": relation, "count": total},
+        )
+
+    all_pat = re.match(r"^(?:how many|count)\s+pandas\??$", lower)
+    if all_pat:
+        total = _scalar_int(session, "SELECT COUNT(*) AS n FROM core.panda_profiles")
+        return ChatResponse(
+            session_id=session_id,
+            intent="analytics_count_pandas",
+            response=f"There are {total} pandas in core.panda_profiles.",
+            data={"relation": "core.panda_profiles", "count": total},
+        )
+
+    status_pat = re.match(r"^(?:how many|count)\s+(alive|deceased|dead)\s+pandas\??$", lower)
+    if status_pat:
+        status = status_pat.group(1)
+        normalized = "deceased" if status == "dead" else status
+        total = _scalar_int(
+            session,
+            """
+            SELECT COUNT(*) AS n
+            FROM core.panda_profiles
+            WHERE lower(coalesce(status, '')) = :status
+            """,
+            {"status": normalized},
+        )
+        return ChatResponse(
+            session_id=session_id,
+            intent="analytics_count_status",
+            response=f"There are {total} pandas with status '{normalized}'.",
+            data={"status": normalized, "count": total},
+        )
+
+    curated_pat = re.match(r"^(?:how many|count)\s+curated\s+(?:profiles|pandas)\??$", lower)
+    if curated_pat:
+        relation_exists = _relation_exists(session, "core", "panda_profile_overrides")
+        if not relation_exists:
+            return ChatResponse(
+                session_id=session_id,
+                intent="analytics_curated_missing",
+                response="Curated override table is not available yet in this database.",
+                data={"relation": "core.panda_profile_overrides", "count": 0},
+            )
+        total = _scalar_int(session, "SELECT COUNT(*) AS n FROM core.panda_profile_overrides")
+        return ChatResponse(
+            session_id=session_id,
+            intent="analytics_count_curated",
+            response=f"There are {total} curated panda override profiles.",
+            data={"relation": "core.panda_profile_overrides", "count": total},
+        )
+
+    matches_pat = re.match(
+        r"^(?:how many|count)\s+matches(?:\s+for)?\s+(.+)$",
+        message,
+        re.IGNORECASE,
+    )
+    if matches_pat:
+        panda_name = matches_pat.group(1).strip(" ?.")
+        resolved_name = _find_panda_name_by_substring(session, panda_name) or panda_name
+        top = _top_matches_data(session, panda_name=resolved_name, k=50)
+        memory["last_panda_name"] = resolved_name
+        return ChatResponse(
+            session_id=session_id,
+            intent="analytics_count_matches_for_panda",
+            response=f"{resolved_name} has {top['count']} ranked matches in {top['source_view']}.",
+            data={
+                "panda_name": resolved_name,
+                "count": top["count"],
+                "source_view": top["source_view"],
+            },
+        )
+
     return None
 
 
@@ -730,6 +826,15 @@ def chat_agent(payload: ChatRequest) -> ChatResponse:
                 data={"best_match": top, "ranking_meta": result},
             )
 
+        analytics_response = _analytics_chat_response(
+            session=session,
+            session_id=session_id,
+            message=message,
+            memory=memory,
+        )
+        if analytics_response is not None:
+            return analytics_response
+
         if top_pattern:
             k_raw = top_pattern.group(1)
             panda_name = top_pattern.group(2).strip()
@@ -876,6 +981,7 @@ def chat_agent(payload: ChatRequest) -> ChatResponse:
                     "'top 5 matches for Bao Li' (or 'give me the top 5 matches for Bao Li'), "
                     "'explain <focal_id> <candidate_id>', "
                     "'blockers for <focal_id|name>', "
+                    "'how many eligible pandas', 'count alive pandas', "
                     "'who is <name>', 'how old is <name>', 'where is <name>', "
                     "'health of <name>', 'personality of <name>'."
                 ),
@@ -901,6 +1007,7 @@ def chat_agent(payload: ChatRequest) -> ChatResponse:
                 "'top 5 matches for Bao Li', "
                 "'explain <focal_id> <candidate_id>', "
                 "'blockers for <focal_id|name>', "
+                "'how many eligible pandas', "
                 "'who is <name>', 'health of <name>'."
             ),
             data={"memory": memory},
