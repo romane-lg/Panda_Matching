@@ -8,6 +8,7 @@ from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from panda_matching.db.models import PandaProfile
@@ -18,6 +19,56 @@ PANDAS_URL = "https://blackandwhitebear.com/data/pandas.json"
 
 def _base_name(name: str | None) -> str:
     return re.sub(r"\s*\(.*?\)\s*$", "", name or "").strip()
+
+
+def _normalized_text(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _natural_key_from_values(
+    *,
+    name: str | None,
+    birth_date: str | None,
+    birth_year: int | None,
+    sex: str | None,
+) -> tuple[str, str, int, str]:
+    return (
+        _normalized_text(_base_name(name)),
+        (birth_date or "").strip(),
+        int(birth_year or 0),
+        _normalized_text(sex),
+    )
+
+
+def _natural_key(row: dict[str, Any]) -> tuple[str, str, int, str]:
+    return _natural_key_from_values(
+        name=row.get("name"),
+        birth_date=row.get("birth_date"),
+        birth_year=row.get("birth_year"),
+        sex=row.get("sex"),
+    )
+
+
+def _quality_score(row: dict[str, Any]) -> int:
+    fields = [
+        "name",
+        "chinese_name",
+        "sex",
+        "birth_date",
+        "birth_year",
+        "current_location",
+        "zoo_or_facility",
+        "city_region",
+        "country",
+        "mother",
+        "father",
+        "status",
+    ]
+    score = sum(1 for field in fields if row.get(field))
+    payload = row.get("raw_payload")
+    if isinstance(payload, dict):
+        score += len(payload)
+    return score
 
 
 def _country_from_location(location: str | None) -> str | None:
@@ -131,7 +182,7 @@ def load_profiles() -> int:
 
         upsert_rows.append(
             {
-                "source_id": int(raw["id"]),
+                "source_id": str(raw["id"]),
                 "name": name,
                 "chinese_name": raw.get("chineseName"),
                 "sex": raw.get("sex"),
@@ -156,12 +207,50 @@ def load_profiles() -> int:
             }
         )
 
-    if not upsert_rows:
-        return 0
-
     session_maker = get_sessionmaker()
     with session_maker() as session:
-        stmt = insert(PandaProfile).values(upsert_rows)
+        existing_key_to_source_id: dict[tuple[str, str, int, str], str] = {}
+        existing_rows = session.execute(
+            select(
+                PandaProfile.source_id,
+                PandaProfile.name,
+                PandaProfile.birth_date,
+                PandaProfile.birth_year,
+                PandaProfile.sex,
+            )
+        )
+        for source_id, name, birth_date, birth_year, sex in existing_rows:
+            key = _natural_key_from_values(
+                name=name,
+                birth_date=birth_date.isoformat() if birth_date else None,
+                birth_year=birth_year,
+                sex=sex,
+            )
+            existing_key_to_source_id.setdefault(key, source_id)
+
+        deduped_by_key: dict[tuple[str, str, int, str], dict[str, Any]] = {}
+        for row in upsert_rows:
+            key = _natural_key(row)
+            canonical_source_id = existing_key_to_source_id.get(key)
+            if canonical_source_id:
+                row["source_id"] = canonical_source_id
+
+            prior = deduped_by_key.get(key)
+            if prior is None or _quality_score(row) > _quality_score(prior):
+                deduped_by_key[key] = row
+
+        deduped_by_source_id: dict[str, dict[str, Any]] = {}
+        for row in deduped_by_key.values():
+            source_id = str(row["source_id"])
+            prior = deduped_by_source_id.get(source_id)
+            if prior is None or _quality_score(row) > _quality_score(prior):
+                deduped_by_source_id[source_id] = row
+
+        final_rows = list(deduped_by_source_id.values())
+        if not final_rows:
+            return 0
+
+        stmt = insert(PandaProfile).values(final_rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["source_id"],
             set_={
@@ -188,4 +277,4 @@ def load_profiles() -> int:
         session.execute(stmt)
         session.commit()
 
-    return len(upsert_rows)
+    return len(final_rows)

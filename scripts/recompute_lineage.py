@@ -21,8 +21,8 @@ def _valid_name(name: str | None) -> str | None:
     return normalized
 
 
-def compute_lineage_updates(rows: list[dict[str, Any]]) -> list[tuple[int, int]]:
-    panda_node_to_id: dict[str, int] = {}
+def compute_lineage_updates(rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
+    panda_node_to_id: dict[str, str] = {}
     graph: dict[str, set[str]] = defaultdict(set)
 
     def connect(a: str, b: str) -> None:
@@ -33,7 +33,7 @@ def compute_lineage_updates(rows: list[dict[str, Any]]) -> list[tuple[int, int]]
         source_id_raw = row.get("source_id")
         if source_id_raw is None:
             continue
-        source_id = int(source_id_raw)
+        source_id = str(source_id_raw)
         panda_name = _valid_name(str(row.get("name"))) or f"PANDA_{source_id}"
 
         panda_node = f"panda:{source_id}"
@@ -51,7 +51,7 @@ def compute_lineage_updates(rows: list[dict[str, Any]]) -> list[tuple[int, int]]
             connect(panda_node, f"person:{father.lower()}")
 
     visited: set[str] = set()
-    components: list[list[int]] = []
+    components: list[list[str]] = []
 
     for node in panda_node_to_id:
         if node in visited:
@@ -59,7 +59,7 @@ def compute_lineage_updates(rows: list[dict[str, Any]]) -> list[tuple[int, int]]
 
         queue: deque[str] = deque([node])
         visited.add(node)
-        panda_ids: list[int] = []
+        panda_ids: list[str] = []
 
         while queue:
             cur = queue.popleft()

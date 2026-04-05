@@ -1,6 +1,14 @@
 # Panda Matching Database
 
-A PostgreSQL database designed to support a panda breeding compatibility and matching recommendation system. The system cleans panda data, determines breeding eligibility, generates candidate pairs, scores compatibility, and produces ranked match recommendations.
+A PostgreSQL + Python system for panda breeding compatibility and conversational match exploration.
+
+The project now includes:
+
+* Core SQL matching pipeline (eligibility → candidate pairs → recommendations)
+* Curated panda profile overrides (personality + health expert notes)
+* Text-derived feature extraction for explainable scoring
+* v2 pair scoring with score breakdowns
+* FastAPI endpoints + browser chat UI for agent-style interaction
 
 ---
 
@@ -17,6 +25,10 @@ Raw panda data
     ↓
 Clean panda profiles
     ↓
+Curated profile overrides
+    ↓
+Agent-ready merged profile view
+    ↓
 Breeding eligibility
     ↓
 Matching features
@@ -27,7 +39,11 @@ Scored recommendations
     ↓
 Directional recommendations
     ↓
-Ranked matches per panda
+Text feature extraction
+    ↓
+Explainable v2 pair scoring
+    ↓
+Ranked matches per panda (v2)
 ```
 
 ---
@@ -38,16 +54,21 @@ Schema used: `core`
 
 Main objects:
 
-| Object                                 | Type  | Purpose                                                  |
-| -------------------------------------- | ----- | -------------------------------------------------------- |
-| panda_profiles                         | Table | Raw panda data                                           |
-| panda_profiles_clean                   | View  | Cleaned and standardized panda data                      |
-| breadeable_pandas                      | View  | Pandas eligible for breeding                             |
-| matching_features                      | View  | Matching and data quality features per panda             |
-| candidate_pairs                        | View  | All possible panda pairs                                 |
-| recommended_matches                    | View  | Compatibility scoring for pairs                          |
-| directional_recommended_matches        | View  | Converts pairs into focal panda → candidate panda format |
-| ranked_directional_recommended_matches | View  | Ranked match recommendations per panda                   |
+| Object                                    | Type  | Purpose                                                    |
+| ----------------------------------------- | ----- | ---------------------------------------------------------- |
+| panda_profiles                            | Table | Raw + enriched panda profile records                       |
+| panda_profile_overrides                   | Table | Curated health/personality overrides for named pandas      |
+| panda_profiles_agent                      | View  | Merged agent view (`raw` + `curated` fallback columns)     |
+| panda_profiles_clean                      | View  | Cleaned and standardized panda data                        |
+| breedeable_pandas                         | View  | Pandas eligible for breeding                               |
+| matching_features                         | View  | Matching and data quality features per panda               |
+| candidate_pairs                           | View  | All possible panda pairs                                   |
+| recommended_matches                       | View  | Compatibility scoring for pairs                            |
+| directional_recommended_matches           | View  | Pair → focal/candidate directional format                  |
+| ranked_directional_recommended_matches    | View  | Original ranked recommendations                            |
+| panda_text_features                       | Table | Text-derived numeric/behavioral scoring features per panda |
+| match_scores_v2                           | Table | Explainable pair-level v2 scoring outputs                  |
+| ranked_directional_recommended_matches_v2 | View  | Final v2 ranked recommendations with breakdown             |
 
 ---
 
@@ -225,19 +246,23 @@ This allows the system to easily answer:
 
 ---
 
-# View: ranked_directional_recommended_matches
+# View: ranked_directional_recommended_matches_v2
 
-Final recommendation layer.
+Explainable final recommendation layer.
 
-Adds:
+Adds v2 scoring artifacts:
 
 ```
-recommendation_rank
+final_score_v2
+recommendation_rank_v2
+score_breakdown_json
+top_positive_factors
+top_negative_factors
 ```
 
-Ranking candidates per panda based on recommendation score.
+Ranking candidates per panda based on final v2 score.
 
-This is the main output table for the matching system.
+This is the preferred output for the agent/API.
 
 ---
 
@@ -250,6 +275,16 @@ SELECT *
 FROM core.ranked_directional_recommended_matches
 WHERE focal_panda_name = 'Long Long'
 ORDER BY recommendation_rank;
+```
+
+### Top matches using explainable v2 score
+
+```sql
+SELECT *
+FROM core.ranked_directional_recommended_matches_v2
+WHERE focal_panda_name = 'Ai Bao'
+ORDER BY recommendation_rank_v2
+LIMIT 5;
 ```
 
 ### Top 5 matches for every panda
@@ -340,17 +375,23 @@ Steps executed:
 1. Apply latest migrations (`alembic upgrade head`)
 2. Sync latest pandas from source (`scripts/import_blackandwhitebear.py`)
 3. Sync descriptions, life journey, twin/personality/breeding/health enrichment (`scripts/sync_panda_descriptions.py`)
-4. Recompute lineage groups (`scripts/recompute_lineage.py`)
-5. Validate counts for:
+4. Load curated profile overrides (`scripts/load_curated_profiles.py`)
+5. Recompute lineage groups (`scripts/recompute_lineage.py`)
+6. Extract text-derived feature vectors (`scripts/extract_text_features.py`)
+7. Compute explainable v2 pair scores (`scripts/compute_match_scores_v2.py`)
+8. Validate counts for:
    - `core.panda_profiles`
    - `core.breedeable_pandas`
    - `core.ranked_directional_recommended_matches`
+   - `core.panda_profile_overrides`
+   - `core.panda_text_features`
+   - `core.match_scores_v2`
 
 Run manually:
 
 ```bash
 source .venv/bin/activate
-export DATABASE_URL=postgresql+psycopg://panda:panda@localhost:5432/panda_matching
+set -a; source .env; set +a
 ./scripts/refresh_pipeline.sh
 ```
 
@@ -364,14 +405,34 @@ Scheduling options:
 
 # Possible Future Improvements
 
-* Genetic relatedness scoring
-* Location compatibility scoring
-* Health compatibility scoring
-* Breeding success probability model
-* Machine learning pair scoring
-* Dashboard visualization
-* API for match queries
-* Agent interface for natural language queries
+* Expand curated coverage beyond current famous-panda subset
+* Add previous-interaction signal from historical pairing outcomes
+* Add API auth and role-based access controls
+* Add regression evaluation suite for v1 vs v2 score stability
+* Add dashboard for v2 score component drift over time
+
+---
+
+# API and Chat
+
+Run API:
+
+```bash
+uv run panda-matching-api
+```
+
+Useful URLs:
+
+* `http://localhost:8000/health`
+* `http://localhost:8000/docs`
+* `http://localhost:8000/chat` (browser chat UI)
+
+Main endpoints:
+
+* `GET /matches/top?panda_name=<name>&k=<n>`
+* `GET /matches/explain?focal_id=<id>&candidate_id=<id>`
+* `GET /matches/blockers?focal_id=<id>`
+* `POST /agent/chat`
 
 ---
 

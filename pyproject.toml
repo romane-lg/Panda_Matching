@@ -24,6 +24,8 @@ dependencies = [
   "sqlalchemy>=2.0",
   "psycopg[binary]>=3.1",
   "alembic>=1.13",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,7 @@ dev = [
 
 [project.scripts]
 panda-matching = "panda_matching.cli:main"
+panda-matching-api = "panda_matching.api:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/panda_matching"]

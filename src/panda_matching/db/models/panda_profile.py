@@ -14,7 +14,7 @@ class PandaProfile(Base):
     __tablename__ = "panda_profiles"
     __table_args__ = {"schema": "core"}
 
-    source_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     chinese_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sex: Mapped[str | None] = mapped_column(String(32), nullable=True)

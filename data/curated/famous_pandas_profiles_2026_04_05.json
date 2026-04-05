@@ -1,0 +1,378 @@
+[
+  {
+    "canonical_name": "He Hua",
+    "aliases": ["He Hua", "Hua Hua", "和花"],
+    "personality_tags": ["gentle", "laid-back", "people-oriented"],
+    "health_notes": "Double-rowed teeth can hinder eating and growth; right hind paw turns outward and affects climbing; managed with crushed bamboo powder diet and daily hind-leg exercises.",
+    "agent_summary": "Gentle, peaceful panda known as Hua Hua. Noted dental and hind-leg mobility issues under active keeper-supported management.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bei Bei",
+    "aliases": ["Bei Bei", "贝贝"],
+    "personality_tags": ["bold", "playful", "mischievous"],
+    "health_notes": "Reported healthy through Smithsonian period; transferred to China in 2019 and continues in breeding program.",
+    "agent_summary": "Playful, toy-loving male with no major public health concerns noted in this profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bao Bao",
+    "aliases": ["Bao Bao", "宝宝"],
+    "personality_tags": ["curious", "independent", "adventurous"],
+    "health_notes": "Reported healthy before transfer to China in 2017; currently part of breeding program.",
+    "agent_summary": "Curious and independent female with strong exploratory behavior and no major public health issues noted here.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Mei Xiang",
+    "aliases": ["Mei Xiang", "美香"],
+    "personality_tags": ["cautious", "observant", "devoted-mother"],
+    "health_notes": "Senior-age conditions include arthritis, hypertension, and ascites; managed with laser therapy, blood pressure checks, ultrasound monitoring, and medication.",
+    "agent_summary": "Experienced mother with careful temperament; age-related chronic health management documented.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Tian Tian",
+    "aliases": ["Tian Tian", "添添"],
+    "personality_tags": ["mellow", "easygoing", "people-oriented"],
+    "health_notes": "Developed arthritis and hypertension in older age; received laser therapy and regular monitoring; trained for voluntary participation in health checks.",
+    "agent_summary": "Calm, social male with documented age-related arthritis and blood pressure management.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xiao Qi Ji",
+    "aliases": ["Xiao Qi Ji", "小奇迹"],
+    "personality_tags": ["inquisitive", "playful", "cautious"],
+    "health_notes": "Described as very healthy with strong growth; trained for voluntary blood draws and weight checks.",
+    "agent_summary": "Goofy, curious male with excellent health indicators in this profile period.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bao Li",
+    "aliases": ["Bao Li", "宝力"],
+    "personality_tags": ["chatty", "confident", "social"],
+    "health_notes": "Reported healthy; cooperative with voluntary blood draw and blood pressure training.",
+    "agent_summary": "Young, social male with stable health and strong keeper interaction behavior.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Ying Ying",
+    "aliases": ["Ying Ying", "盈盈"],
+    "personality_tags": ["reserved", "calm", "independent"],
+    "health_notes": "No major publicly reported health issues in this profile; involved in repeated breeding attempts.",
+    "agent_summary": "Calm, reserved female with stable publicly reported health status.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Yuan",
+    "aliases": ["Yuan Yuan", "园园"],
+    "personality_tags": ["gentle", "calm", "senior-stable"],
+    "health_notes": "Senior panda with no major publicly reported health issues in this profile.",
+    "agent_summary": "Older, gentle male described as stable in long-term zoo residence.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Zai",
+    "aliases": ["Yuan Zai", "圓仔"],
+    "personality_tags": ["laid-back", "friendly", "award-winning"],
+    "health_notes": "Generally healthy; obesity concern noted by 2022 and managed via calorie control and exercise games.",
+    "agent_summary": "Friendly, low-energy female; weight management program documented.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Tuan Tuan",
+    "aliases": ["Tuan Tuan", "團團"],
+    "personality_tags": ["gentle", "beloved"],
+    "health_notes": "Diagnosed with malignant brain tumor (gemistocytic astrocytoma) in 2022 with seizures and brain necrosis; euthanized on 2022-11-19.",
+    "agent_summary": "Beloved male panda; severe neurologic disease led to euthanasia in 2022.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Yuan (Taipei)",
+    "aliases": ["Yuan Yuan", "圓圓", "Yuan Yuan (Taipei)"],
+    "personality_tags": ["playful", "charming"],
+    "health_notes": "Monitored for cardiovascular health with blood pressure and ultrasound checks; reported in good health in 2024.",
+    "agent_summary": "Playful female at Taipei Zoo with proactive cardiovascular monitoring.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Huan Huan",
+    "aliases": ["Huan Huan", "欢欢"],
+    "personality_tags": ["reserved", "devoted-mother"],
+    "health_notes": "Diagnosed with kidney failure in September 2025; returned to China in November 2025 earlier than scheduled.",
+    "agent_summary": "Watchful mother with serious kidney disease prompting early repatriation.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Zi",
+    "aliases": ["Yuan Zi", "圆仔"],
+    "personality_tags": ["enthusiastic", "food-motivated"],
+    "health_notes": "No major reported health issues; returned to China in November 2025 as a senior panda.",
+    "agent_summary": "Engaged, enrichment-motivated male with generally stable health profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Meng Meng",
+    "aliases": ["Meng Meng", "梦梦"],
+    "personality_tags": ["gentle", "adaptable", "devoted-mother"],
+    "health_notes": "Healthy and highly reproductive; gave birth to twins in 2019 and 2024 in Berlin.",
+    "agent_summary": "Photogenic, adaptable female with strong reproductive success.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Jiao Qing",
+    "aliases": ["Jiao Qing", "娇庆"],
+    "personality_tags": ["relaxed", "calm"],
+    "health_notes": "No notable health issues reported; healthy at Berlin Zoo.",
+    "agent_summary": "Easygoing male with stable health profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Lun Lun",
+    "aliases": ["Lun Lun", "伦伦"],
+    "personality_tags": ["beautiful", "prolific-mother", "iconic"],
+    "health_notes": "Returned to Chengdu in October 2024 in good health after long Atlanta residency.",
+    "agent_summary": "Iconic, highly prolific mother with stable return-to-China health status.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Er Shun",
+    "aliases": ["Er Shun", "二顺"],
+    "personality_tags": ["affectionate", "gentle", "loving-mother"],
+    "health_notes": "No major health issues reported; returned to China in 2020 due to pandemic bamboo supply constraints.",
+    "agent_summary": "Nurturing mother with stable health profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Da Mao",
+    "aliases": ["Da Mao", "大毛"],
+    "personality_tags": ["easygoing", "well-liked"],
+    "health_notes": "No significant health issues reported; returned to China in 2020.",
+    "agent_summary": "Easygoing male with stable health history in Canadian program.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yang Guang",
+    "aliases": ["Yang Guang", "阳光"],
+    "personality_tags": ["docile", "relaxed"],
+    "health_notes": "No major health issues reported during Edinburgh period; returned to China in 2023.",
+    "agent_summary": "Docile male with stable long-stay health history.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Rauhin",
+    "aliases": ["Rauhin", "良浜"],
+    "personality_tags": ["experienced-mother", "calm"],
+    "health_notes": "No major publicly reported health issues in this profile period; associated with successful breeding history.",
+    "agent_summary": "Calm, experienced mother linked to strong breeding outcomes.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Hao Hao",
+    "aliases": ["Hao Hao", "好好"],
+    "personality_tags": ["kind", "reserved", "protective-mother"],
+    "health_notes": "Diagnosed with moderate ascites in early 2025 and returned to China in December 2025 for specialized care.",
+    "agent_summary": "Reserved but protective mother with documented ascites and medical repatriation in 2025.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xing Hui",
+    "aliases": ["Xing Hui", "星徽"],
+    "personality_tags": ["enthusiastic", "food-motivated"],
+    "health_notes": "No major health issues reported; expected to remain at Pairi Daiza under cooperation timeline.",
+    "agent_summary": "Enrichment-engaged male with stable health profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Kai Kai",
+    "aliases": ["Kai Kai", "凯凯"],
+    "personality_tags": ["private-to-outgoing", "cooperative"],
+    "health_notes": "Receives annual full medical exams; completed conditioning exercises for hind-leg strength; in good monitored health.",
+    "agent_summary": "Previously private male now more outgoing, with strong cooperative training behavior and routine health monitoring.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Jia Jia",
+    "aliases": ["Jia Jia", "嘉嘉"],
+    "personality_tags": ["playful", "affectionate", "good-mother"],
+    "health_notes": "Trained for ultrasound and urine collection; healthy after giving birth to Singapore's first panda cub Le Le in 2021.",
+    "agent_summary": "Playful, attentive mother with documented reproductive success and stable health.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yang Yang",
+    "aliases": ["Yang Yang", "阳阳"],
+    "personality_tags": ["calm", "artistic", "natural-breeder"],
+    "health_notes": "Healthy through long Vienna stay; gave birth naturally to five cubs; returned to Chengdu in September 2024 in good health.",
+    "agent_summary": "Calm, iconic female with exceptional natural breeding record and stable health history.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xin Xin",
+    "aliases": ["Xin Xin", "新新"],
+    "personality_tags": ["peaceful", "apple-lover", "historic"],
+    "health_notes": "Oldest living giant panda outside China; aging teeth and joints but stable with daily exercise-based checks.",
+    "agent_summary": "Exceptionally long-lived female with stable age-related management and high historical significance.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Tian Bao",
+    "aliases": ["Tian Bao", "天宝"],
+    "personality_tags": ["proud", "attention-seeking"],
+    "health_notes": "Healthy; first panda born in Belgium and returned to China in December 2024 for breeding program placement.",
+    "agent_summary": "Healthy Belgian-born male with distinctive attention-seeking temperament.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bao Di",
+    "aliases": ["Bao Di", "宝弟"],
+    "personality_tags": ["bossy"],
+    "health_notes": "Healthy; returned to China in December 2024 with siblings.",
+    "agent_summary": "Twin male with assertive temperament and stable health status.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bao Mei",
+    "aliases": ["Bao Mei", "宝妹"],
+    "personality_tags": ["clever", "calm"],
+    "health_notes": "Healthy; returned to China in December 2024 with siblings.",
+    "agent_summary": "Twin female with calm, clever temperament and stable health status.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Yuan (Vienna)",
+    "aliases": ["Yuan Yuan", "园园", "Yuan Yuan (Vienna)"],
+    "personality_tags": ["gentle", "clever", "curious"],
+    "health_notes": "Healthy during Vienna residency; returned to Chengdu in September 2024 per cooperation plan.",
+    "agent_summary": "Gentle, curious male with stable health in Vienna program.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Ru Yi",
+    "aliases": ["Ru Yi", "如意"],
+    "personality_tags": ["energetic", "outgoing", "playful"],
+    "health_notes": "Healthy at Moscow Zoo with regular monitoring; father of Katyusha (2023), Russia's first captive-born panda.",
+    "agent_summary": "Outgoing male at Moscow Zoo with stable health and proven reproduction.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Ding Ding",
+    "aliases": ["Ding Ding", "丁丁"],
+    "personality_tags": ["reserved", "intelligent", "devoted-mother"],
+    "health_notes": "Healthy; gave birth to Russia's first panda cub in captivity on 2023-08-24.",
+    "agent_summary": "Intelligent, attentive mother with healthy reproductive outcome.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Katyusha",
+    "aliases": ["Katyusha", "卡秋莎"],
+    "personality_tags": ["fiery", "curious", "mamas-girl", "historic-first"],
+    "health_notes": "Healthy; first panda born in captivity in Russia (2023), public debut in 2024, independent by 2025.",
+    "agent_summary": "Historic Moscow-born cub with energetic, playful temperament and stable health.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Wu Wen",
+    "aliases": ["Wu Wen", "武雯"],
+    "personality_tags": ["attentive-mother", "instinctive"],
+    "health_notes": "Healthy and reproductively successful; natural births in 2020 and 2024 in the Netherlands.",
+    "agent_summary": "Strong natural mothering behavior with documented reproductive success.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xing Ya",
+    "aliases": ["Xing Ya", "星雅"],
+    "personality_tags": ["calm", "natural-breeder"],
+    "health_notes": "Healthy; no major health issues reported in current profile window.",
+    "agent_summary": "Calm male with successful natural mating outcomes.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Meng Lan",
+    "aliases": ["Meng Lan", "萌兰"],
+    "personality_tags": ["escape-artist", "mischievous", "social-butterfly"],
+    "health_notes": "Healthy; enclosure upgraded for safety after repeated escape attempts.",
+    "agent_summary": "Highly mischievous, enrichment-seeking male with stable health and behavior-management updates.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Fan Xing",
+    "aliases": ["Fan Xing", "梵星"],
+    "personality_tags": ["healthy-cub", "historic-birth"],
+    "health_notes": "Born healthy in the Netherlands and returned to China in 2023 under loan terms.",
+    "agent_summary": "Historic first Netherlands-born panda cub with stable developmental health.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yuan Meng",
+    "aliases": ["Yuan Meng", "圆梦"],
+    "personality_tags": ["confident", "attention-commanding"],
+    "health_notes": "Healthy; first captive-born panda in France and returned to China in 2023 for breeding program.",
+    "agent_summary": "France-born male with confident demeanor and stable health profile.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Feng Yi",
+    "aliases": ["Feng Yi", "Liang Liang", "凤仪"],
+    "personality_tags": ["world-record-breeder", "beloved"],
+    "health_notes": "Returned to China in May 2025 in good health after successful natural breeding record in Malaysia.",
+    "agent_summary": "Record-setting natural breeder with stable health at repatriation.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xing Xing",
+    "aliases": ["Xing Xing", "Fu Wa", "兴兴"],
+    "personality_tags": ["world-record-breeder", "calm"],
+    "health_notes": "Returned to China in May 2025 in good health; no major reported issues during Malaysia residency.",
+    "agent_summary": "Calm, productive male with strong natural breeding record.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Pyry",
+    "aliases": ["Pyry", "Hua Bao", "皮律"],
+    "personality_tags": ["food-motivated", "vocal", "energetic"],
+    "health_notes": "Healthy and returned to China in November 2024; early return primarily linked to financial constraints at host zoo.",
+    "agent_summary": "Outgoing, vocal male with stable health and non-medical early repatriation context.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Lumi",
+    "aliases": ["Lumi", "Jin Baobao", "鲁米"],
+    "personality_tags": ["quiet", "selective", "toy-lover"],
+    "health_notes": "Returned to China in excellent health in November 2024; no successful cubs despite multiple breeding attempts.",
+    "agent_summary": "Reserved female with stable health and no reproductive success in host program.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Tai Shan",
+    "aliases": ["Tai Shan", "泰山", "Butterstick"],
+    "personality_tags": ["curious", "charming", "crowd-pleaser"],
+    "health_notes": "Healthy through Smithsonian years; first surviving cub born there, later returned to China and became a father.",
+    "agent_summary": "Historic U.S.-born cub with strong public recognition and stable health history.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Nuan Nuan",
+    "aliases": ["Nuan Nuan", "暖暖"],
+    "personality_tags": ["warmth", "beloved"],
+    "health_notes": "Born healthy in Malaysia and returned to China per loan agreement; currently reported healthy.",
+    "agent_summary": "Malaysia-born cub with stable health trajectory after repatriation.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Chen Xing",
+    "aliases": ["Chen Xing", "Bai Feng", "陈星"],
+    "personality_tags": ["lively", "energetic", "climber"],
+    "health_notes": "Healthy young panda; arrived in Malaysia in November 2025 and entered quarantine before public debut.",
+    "agent_summary": "Energetic young male in new relocation phase with stable health status.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Xiao Yue",
+    "aliases": ["Xiao Yue", "Xing Yi", "小月"],
+    "personality_tags": ["gentle", "composed", "foodie"],
+    "health_notes": "Healthy young panda; arrived with Chen Xing in November 2025 and completed mandatory quarantine stage.",
+    "agent_summary": "Composed young female with stable health in early relocation period.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  }
+]

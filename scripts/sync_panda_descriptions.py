@@ -151,7 +151,7 @@ def main() -> None:
                 personality_tags(row),
                 breeding_notes(row),
                 health_notes(row),
-                int(source_id),
+                str(source_id),
             )
         )
 
