@@ -112,19 +112,19 @@ def llm_chat_response(
         focal_ref = str(args.get("focal_ref") or "").strip()
         if not focal_ref:
             return None
-        focal_id = (
+        blocker_focal_id: str | None = (
             focal_ref
             if looks_like_id(focal_ref)
             else find_panda_id_by_name(session, focal_ref)
         )
-        if not focal_id:
+        if not blocker_focal_id:
             return AgentTurn(
                 intent="llm_blockers_not_found",
                 response=f"I could not resolve focal panda '{focal_ref}'.",
                 data={"requested_focal_ref": focal_ref},
             )
-        result = blockers_data(session, focal_id=focal_id)
-        memory["last_focal_id"] = focal_id
+        result = blockers_data(session, focal_id=blocker_focal_id)
+        memory["last_focal_id"] = blocker_focal_id
         response_text = llm_compose_answer(message, tool, result)
         return AgentTurn(intent="llm_blockers", response=response_text, data=result)
 

@@ -61,7 +61,7 @@ def invoke_databricks_llm(
         f"{host}/serving-endpoints/{endpoint}/invocations",
         f"{host}/api/2.0/serving-endpoints/{endpoint}/invocations",
     ]
-    body = None
+    body: str | None = None
     last_exc: Exception | None = None
     for url in invocation_urls:
         req = urllib.request.Request(
@@ -109,8 +109,9 @@ def invoke_databricks_llm(
             return first_pred
         return json.dumps(first_pred)
 
-    if isinstance(parsed.get("output"), str):
-        return str(parsed["output"])
+    output = parsed.get("output")
+    if isinstance(output, str):
+        return output
 
     return body
 
