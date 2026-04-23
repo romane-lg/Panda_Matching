@@ -374,5 +374,45 @@
     "health_notes": "Healthy young panda; arrived with Chen Xing in November 2025 and completed mandatory quarantine stage.",
     "agent_summary": "Composed young female with stable health in early relocation period.",
     "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Bai Yun",
+    "aliases": ["Bai Yun", "白云"],
+    "personality_tags": ["legendary", "experienced-mother", "teacher-like"],
+    "health_notes": "No specific acute issue highlighted in this profile update; legacy significance is centered on long-term reproductive impact.",
+    "agent_summary": "Highlighted in green as a true legend: Bai Yun shaped modern panda breeding knowledge and holds the US record with 6 surviving cubs; keepers described her as the one who taught them.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Hu Chun",
+    "aliases": ["Hu Chun", "Hu Chun (Indonesia)"],
+    "personality_tags": ["patient", "resilient", "milestone-parent"],
+    "health_notes": "This profile update emphasizes reproductive persistence over multiple years, with successful cub birth in December 2025.",
+    "agent_summary": "With Cai Tao, Hu Chun had one of the most patient journeys: three breeding attempts over multiple years, culminating in December 2025 with Indonesia's first-ever panda cub, Rio.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Cai Tao",
+    "aliases": ["Cai Tao", "Cai Tao (Indonesia)"],
+    "personality_tags": ["patient", "resilient", "milestone-parent"],
+    "health_notes": "This profile update emphasizes reproductive persistence over multiple years, with successful cub birth in December 2025.",
+    "agent_summary": "With Hu Chun, Cai Tao reached a historic breakthrough after three breeding attempts over multiple years: in December 2025 they became parents of Indonesia's first panda cub, Rio.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Zhen Zhen",
+    "aliases": ["Zhen Zhen", "珍珍"],
+    "personality_tags": ["lineage-anchor", "San-Diego-born", "legacy-mother"],
+    "health_notes": "No specific health issue highlighted in this profile update; emphasis is on birthplace and multi-generation lineage significance.",
+    "agent_summary": "Born in San Diego in 2007, later returned to China, and became mother to Yun Chuan, creating a full-circle second-generation San Diego panda story.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
+  },
+  {
+    "canonical_name": "Yun Chuan",
+    "aliases": ["Yun Chuan", "云川"],
+    "personality_tags": ["second-generation", "San-Diego-linked", "symbolic-return"],
+    "health_notes": "No specific health issue highlighted in this profile update; narrative significance centers on family lineage and international transfer.",
+    "agent_summary": "Son of Zhen Zhen, Yun Chuan came to San Diego in 2024, completing a full-circle second-generation San Diego panda narrative.",
+    "source_label": "Curated profile (Claude synthesis, user-provided)"
   }
 ]

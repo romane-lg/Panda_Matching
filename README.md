@@ -9,6 +9,8 @@ The project now includes:
 * Text-derived feature extraction for explainable scoring
 * v2 pair scoring with score breakdowns
 * FastAPI endpoints + browser chat UI for agent-style interaction
+* Persistent chat memory (`chat_sessions`, `chat_messages`, `chat_state`)
+* Optional Databricks LLM conversational mode (planner/response + SQL tool fallback)
 
 ---
 
@@ -48,6 +50,27 @@ Ranked matches per panda (v2)
 
 ---
 
+# Application Structure
+
+The Python application is now split by responsibility instead of keeping API, UI, LLM, and routing logic in one file.
+
+Main modules:
+
+* `src/panda_matching/api/routes.py` – FastAPI app, route definitions, request/response models, server entrypoint
+* `src/panda_matching/api/chat_ui.py` – browser chat UI HTML/JS
+* `src/panda_matching/agent/llm.py` – Databricks foundation model invocation, planning prompt, answer composition
+* `src/panda_matching/agent/tools.py` – SQL/data access helpers, chat memory persistence, structured tool payloads
+* `src/panda_matching/agent/router.py` – LLM-first routing plus deterministic fallback routing
+* `src/panda_matching/cli.py` – CLI import entrypoint
+
+Operational notes:
+
+* `uv run panda-matching-api` still works through `panda_matching.api:run`
+* `POST /agent/chat` is the user-facing conversational endpoint
+* raw structured outputs are still available through dedicated REST endpoints such as `GET /matches/top`
+
+---
+
 # Database Schema Overview
 
 Schema used: `core`
@@ -58,6 +81,9 @@ Main objects:
 | ----------------------------------------- | ----- | ---------------------------------------------------------- |
 | panda_profiles                            | Table | Raw + enriched panda profile records                       |
 | panda_profile_overrides                   | Table | Curated health/personality overrides for named pandas      |
+| chat_sessions                             | Table | One row per conversation session                           |
+| chat_messages                             | Table | Durable chat transcript with role/intent/data payload      |
+| chat_state                                | Table | Persistent short-term session memory (`last_panda_name`, etc.) |
 | panda_profiles_agent                      | View  | Merged agent view (`raw` + `curated` fallback columns)     |
 | panda_profiles_clean                      | View  | Cleaned and standardized panda data                        |
 | breedeable_pandas                         | View  | Pandas eligible for breeding                               |
@@ -433,6 +459,56 @@ Main endpoints:
 * `GET /matches/explain?focal_id=<id>&candidate_id=<id>`
 * `GET /matches/blockers?focal_id=<id>`
 * `POST /agent/chat`
+
+## Conversational Mode (Databricks LLM)
+
+`POST /agent/chat` supports two modes:
+
+1. **LLM mode (preferred):** Databricks LLM plans tool calls and generates conversational responses.
+2. **Fallback mode:** existing deterministic regex/router logic executes if LLM is disabled or unavailable.
+
+This keeps factual answers grounded in your SQL pipeline while improving conversational quality.
+
+The browser chat UI is now user-facing:
+
+* ranked matches are returned as readable summaries
+* profile and blocker answers are summarized in plain language
+* raw tool payloads are not shown in normal chat responses
+
+If you need raw structured output for debugging or integration, use the dedicated REST endpoints such as `GET /matches/top`, `GET /matches/explain`, and `GET /matches/blockers`.
+
+### Enable LLM mode
+
+Add these env vars to `.env` (or export in shell):
+
+```bash
+DATABRICKS_LLM_ENABLED=true
+DATABRICKS_HOST=https://dbc-831610b8-d4ee.cloud.databricks.com
+DATABRICKS_TOKEN=<your_token>
+DATABRICKS_LLM_ENDPOINT=databricks-meta-llama-3-3-70b-instruct
+```
+
+Then restart the API process.
+
+### Recommended endpoint
+
+This project currently uses a Databricks-hosted foundation model endpoint rather than a custom endpoint you deploy yourself.
+
+Recommended value:
+
+* `DATABRICKS_LLM_ENDPOINT=databricks-meta-llama-3-3-70b-instruct`
+
+Notes:
+
+* `databricks-gpt-5-4-mini` may exist in the workspace but can still be unavailable to your user due to Databricks-side rate limiting.
+* If the configured endpoint cannot be invoked, the app logs the LLM failure and falls back to deterministic chat behavior.
+
+### Notes
+
+* LLM mode is optional. If `DATABRICKS_LLM_ENABLED=false`, chat remains fully rule-based.
+* Tool execution remains deterministic (`top_matches`, `blockers`, `explain_match`, etc.).
+* Chat memory is persisted in DB, so sessions survive restarts and multi-worker deployments.
+* If you are testing LLM mode, successful responses usually use intents prefixed with `llm_` such as `llm_top_matches`.
 
 ---
 
