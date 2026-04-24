@@ -512,6 +512,56 @@ Notes:
 
 ---
 
+# Evaluation Starter
+
+The repo now includes a starter GenAI evaluation dataset draft for the chatbot.
+
+Files:
+
+* `data/evaluation/panda_chatbot_eval_v1.json` – starter hybrid evaluation cases
+* `scripts/create_mlflow_eval_dataset.py` – creates or updates an MLflow evaluation dataset using `mlflow.genai.datasets.create_dataset()`
+
+Recommended workflow:
+
+1. Install dev dependencies including MLflow:
+
+```bash
+uv sync --extra dev
+```
+
+2. Preview the starter dataset without calling MLflow:
+
+```bash
+uv run python scripts/create_mlflow_eval_dataset.py --dry-run
+```
+
+3. Set your MLflow environment:
+
+```bash
+export MLFLOW_TRACKING_URI=<your_tracking_uri>
+export MLFLOW_EXPERIMENT_ID=<your_experiment_id>
+```
+
+4. Create or update the evaluation dataset in MLflow:
+
+```bash
+uv run python scripts/create_mlflow_eval_dataset.py
+```
+
+The starter dataset is intentionally hybrid:
+
+* some cases contain hard factual expectations such as count answers
+* others focus on behaviors such as grounding, concise ranked summaries, no raw JSON, and safe fallback behavior
+
+Use this dataset as the initial benchmark, then add:
+
+* production failure cases from real traces
+* follow-up memory cases
+* unsupported or ambiguous requests
+* pairwise breeding-judgment questions you care about most
+
+---
+
 # Final Note
 
 This project is not just a database.

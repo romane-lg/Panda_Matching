@@ -20,8 +20,10 @@ from panda_matching.agent.tools import (
 )
 from panda_matching.api.chat_ui import render_chat_ui
 from panda_matching.db.session import get_sessionmaker
+from panda_matching.observability import SpanType, configure_mlflow_tracing, trace
 
 app = FastAPI(title="Panda Matching API", version="0.1.0")
+configure_mlflow_tracing()
 
 
 class ChatRequest(BaseModel):
@@ -76,6 +78,7 @@ def get_blockers(
 
 
 @app.post("/agent/chat", response_model=ChatResponse)
+@trace(name="chat_agent_request", span_type=SpanType.AGENT)
 def chat_agent(payload: ChatRequest) -> ChatResponse:
     session_id = payload.session_id or str(uuid.uuid4())
     message = payload.message.strip()

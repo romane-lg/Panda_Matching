@@ -5,12 +5,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from panda_matching.agent.llm import llm_compose_answer, llm_enabled, llm_plan_message
 from panda_matching.agent.tools import (
     best_overall_match_data,
     blockers_data,
+    compare_candidates_for_focal_data,
     curated_override_for_name,
     diagnose_no_matches,
     explain_match_data,
@@ -23,6 +25,7 @@ from panda_matching.agent.tools import (
     scalar_int,
     top_matches_data,
 )
+from panda_matching.observability import SpanType, trace
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ class AgentTurn:
     data: dict[str, Any] | None = None
 
 
+@trace(name="llm_chat_response", span_type=SpanType.AGENT)
 def llm_chat_response(
     session: Session,
     *,
@@ -64,6 +68,31 @@ def llm_chat_response(
     tool = str(plan.get("tool") or "").strip().lower()
     args_raw = plan.get("args")
     args = args_raw if isinstance(args_raw, dict) else {}
+
+    try:
+        return _execute_llm_tool(
+            session=session,
+            message=message,
+            memory=memory,
+            tool=tool,
+            args=args,
+        )
+    except HTTPException:
+        logger.exception("LLM tool execution failed; falling back to deterministic chat path")
+        return None
+    except Exception:
+        logger.exception("Unexpected LLM tool failure; falling back to deterministic chat path")
+        return None
+
+
+def _execute_llm_tool(
+    session: Session,
+    *,
+    message: str,
+    memory: dict[str, str],
+    tool: str,
+    args: dict[str, Any],
+) -> AgentTurn | None:
 
     if tool == "top_matches":
         panda_name = str(args.get("panda_name") or "").strip()
@@ -107,6 +136,25 @@ def llm_chat_response(
         memory["last_candidate_id"] = candidate_id
         response_text = llm_compose_answer(message, tool, result)
         return AgentTurn(intent="llm_explain_match", response=response_text, data=result)
+
+    if tool == "compare_candidates":
+        focal_panda_name = str(args.get("focal_panda_name") or "").strip()
+        candidate_a_name = str(args.get("candidate_a_name") or "").strip()
+        candidate_b_name = str(args.get("candidate_b_name") or "").strip()
+        if not focal_panda_name or not candidate_a_name or not candidate_b_name:
+            return None
+        resolved_focal = (
+            find_panda_name_by_substring(session, focal_panda_name) or focal_panda_name
+        )
+        result = compare_candidates_for_focal_data(
+            session,
+            focal_panda_name=resolved_focal,
+            candidate_a_name=candidate_a_name,
+            candidate_b_name=candidate_b_name,
+        )
+        memory["last_panda_name"] = resolved_focal
+        response_text = llm_compose_answer(message, tool, result)
+        return AgentTurn(intent="llm_compare_candidates", response=response_text, data=result)
 
     if tool == "blockers":
         focal_ref = str(args.get("focal_ref") or "").strip()
@@ -333,6 +381,7 @@ def analytics_chat_response(
     return None
 
 
+@trace(name="route_chat_message", span_type=SpanType.AGENT)
 def route_chat_message(session: Session, message: str, memory: dict[str, str]) -> AgentTurn:
     lower = message.lower()
 
@@ -344,6 +393,11 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
     top_pattern = re.search(
         r"(?:top|best)\s*(\d+)?\s*matches(?:\s+for)?\s+(.+)$",
         message,
+        flags=re.IGNORECASE,
+    )
+    pairwise_pattern = re.match(
+        r"^is\s+(.+?)\s+or\s+(.+?)\s+better\s+for\s+(.+?)(?:,?\s*and why)?\??$",
+        message.strip(),
         flags=re.IGNORECASE,
     )
     global_best_pattern = re.search(
@@ -379,6 +433,37 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
     analytics_response = analytics_chat_response(session=session, message=message, memory=memory)
     if analytics_response is not None:
         return analytics_response
+
+    if pairwise_pattern:
+        candidate_a_name = pairwise_pattern.group(1).strip(" ?.")
+        candidate_b_name = pairwise_pattern.group(2).strip(" ?.")
+        focal_panda_name = pairwise_pattern.group(3).strip(" ?.")
+        resolved_focal = find_panda_name_by_substring(session, focal_panda_name) or focal_panda_name
+        result = compare_candidates_for_focal_data(
+            session,
+            focal_panda_name=resolved_focal,
+            candidate_a_name=candidate_a_name,
+            candidate_b_name=candidate_b_name,
+        )
+        memory["last_panda_name"] = resolved_focal
+        if result["missing_candidates"]:
+            missing = ", ".join(result["missing_candidates"])
+            return AgentTurn(
+                intent="compare_candidates_partial",
+                response=(
+                    f"I could not find ranked match rows for {missing} under {resolved_focal}. "
+                    "Try asking for the top matches first or use exact candidate names."
+                ),
+                data=result,
+            )
+        better = result["better_match"]
+        assert better is not None
+        better_name = str(better.get("candidate_panda_name") or "the higher-ranked candidate")
+        return AgentTurn(
+            intent="compare_candidates",
+            response=f"{better_name} appears to be the stronger match for {resolved_focal}.",
+            data=result,
+        )
 
     if top_pattern:
         k_raw = top_pattern.group(1)

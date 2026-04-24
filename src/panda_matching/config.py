@@ -11,6 +11,8 @@ class Settings:
     databricks_token: str | None
     databricks_llm_endpoint: str | None
     databricks_llm_enabled: bool
+    mlflow_tracking_uri: str | None
+    mlflow_experiment_id: str | None
 
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://panda:panda@localhost:5432/panda_matching"
@@ -25,4 +27,6 @@ def get_settings() -> Settings:
         databricks_token=os.getenv("DATABRICKS_TOKEN"),
         databricks_llm_endpoint=os.getenv("DATABRICKS_LLM_ENDPOINT"),
         databricks_llm_enabled=llm_enabled,
+        mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),
+        mlflow_experiment_id=os.getenv("MLFLOW_EXPERIMENT_ID"),
     )

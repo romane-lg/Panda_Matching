@@ -6,6 +6,7 @@ import urllib.request
 from typing import Any
 
 from panda_matching.config import get_settings
+from panda_matching.observability import SpanType, start_span, trace
 
 
 def llm_enabled() -> bool:
@@ -36,6 +37,7 @@ def extract_json_object(text_value: str) -> dict[str, Any] | None:
     return parsed
 
 
+@trace(name="databricks_llm_invoke", span_type=SpanType.CHAT_MODEL)
 def invoke_databricks_llm(
     messages: list[dict[str, str]],
     *,
@@ -74,10 +76,19 @@ def invoke_databricks_llm(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                body = resp.read().decode("utf-8")
+            with start_span(
+                "databricks_http_request",
+                span_type=SpanType.TOOL,
+                attributes={"endpoint_url": url},
+            ) as span:
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    if span is not None:
+                        span.set_attribute("http_status_code", resp.status)
+                    body = resp.read().decode("utf-8")
             break
         except urllib.error.HTTPError as exc:
+            if span is not None:
+                span.set_attribute("http_status_code", exc.code)
             last_exc = exc
             if exc.code == 404:
                 continue
@@ -122,6 +133,7 @@ def llm_plan_message(message: str, memory: dict[str, str]) -> dict[str, Any] | N
         "Return strict JSON only. Choose either mode=tool or mode=respond. "
         "Available tools and args: "
         "top_matches(panda_name,k), explain_match(focal_id,candidate_id), "
+        "compare_candidates(focal_panda_name,candidate_a_name,candidate_b_name), "
         "blockers(focal_ref), panda_profile(name), best_overall(), "
         "count_eligible(), count_pandas(), count_status(status), count_sex(sex), "
         "count_curated(), count_matches_for_panda(panda_name). "

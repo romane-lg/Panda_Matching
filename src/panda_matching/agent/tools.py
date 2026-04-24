@@ -3,18 +3,22 @@ from __future__ import annotations
 import json
 import re
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from panda_matching.observability import SpanType, trace
 
+
+@trace(name="sql_rows_query", span_type=SpanType.TOOL)
 def rows(session: Session, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     result = session.execute(text(sql), params)
     return [dict(row) for row in result.mappings().all()]
 
 
+@trace(name="sql_scalar_query", span_type=SpanType.TOOL)
 def scalar_int(session: Session, sql: str, params: dict[str, Any] | None = None) -> int:
     row = session.execute(text(sql), params or {}).mappings().one()
     return int(row["n"])
@@ -52,6 +56,7 @@ def pick_relation(session: Session, schema: str, candidates: list[str]) -> str:
     )
 
 
+@trace(name="top_matches_data", span_type=SpanType.TOOL)
 def top_matches_data(session: Session, panda_name: str, k: int) -> dict[str, Any]:
     ranked_view = pick_relation(
         session,
@@ -91,6 +96,68 @@ def top_matches_data(session: Session, panda_name: str, k: int) -> dict[str, Any
     }
 
 
+@trace(name="compare_candidates_for_focal_data", span_type=SpanType.TOOL)
+def compare_candidates_for_focal_data(
+    session: Session,
+    *,
+    focal_panda_name: str,
+    candidate_a_name: str,
+    candidate_b_name: str,
+) -> dict[str, Any]:
+    ranked = top_matches_data(session, panda_name=focal_panda_name, k=200)
+    matches = cast(list[dict[str, Any]], ranked["matches"])
+
+    def _match_candidate(name: str) -> dict[str, Any] | None:
+        lowered = name.strip().lower()
+        for row in matches:
+            candidate_name = str(row.get("candidate_panda_name") or "").strip()
+            if candidate_name.lower() == lowered:
+                return row
+        for row in matches:
+            candidate_name = str(row.get("candidate_panda_name") or "").strip()
+            if lowered in candidate_name.lower():
+                return row
+        return None
+
+    candidate_a = _match_candidate(candidate_a_name)
+    candidate_b = _match_candidate(candidate_b_name)
+    candidates = [row for row in [candidate_a, candidate_b] if row is not None]
+
+    def _sort_key(row: dict[str, Any]) -> tuple[float, float]:
+        final_score = row.get("final_score_v2")
+        recommendation_score = row.get("recommendation_score")
+        try:
+            final_val = float(str(final_score)) if final_score is not None else float("-inf")
+        except ValueError:
+            final_val = float("-inf")
+        try:
+            fallback_val = (
+                float(str(recommendation_score))
+                if recommendation_score is not None
+                else float("-inf")
+            )
+        except ValueError:
+            fallback_val = float("-inf")
+        return (final_val, fallback_val)
+
+    better_match = max(candidates, key=_sort_key) if candidates else None
+    return {
+        "focal_panda_name": focal_panda_name,
+        "candidate_a_name": candidate_a_name,
+        "candidate_b_name": candidate_b_name,
+        "candidate_a": candidate_a,
+        "candidate_b": candidate_b,
+        "better_match": better_match,
+        "missing_candidates": [
+            name
+            for name, row in ((candidate_a_name, candidate_a), (candidate_b_name, candidate_b))
+            if row is None
+        ],
+        "source_view": ranked["source_view"],
+    }
+
+
+@trace(name="explain_match_data", span_type=SpanType.TOOL)
 def explain_match_data(session: Session, focal_id: str, candidate_id: str) -> dict[str, Any]:
     relation = pick_relation(
         session,
@@ -125,6 +192,7 @@ def explain_match_data(session: Session, focal_id: str, candidate_id: str) -> di
     return {"focal_id": focal_id, "candidate_id": candidate_id, "explanation": result[0]}
 
 
+@trace(name="blockers_data", span_type=SpanType.TOOL)
 def blockers_data(session: Session, focal_id: str) -> dict[str, Any]:
     pair_view = pick_relation(session, schema="core", candidates=["candidate_pairs"])
     cols = relation_columns(session, schema="core", relation=pair_view)
@@ -159,6 +227,7 @@ def blockers_data(session: Session, focal_id: str) -> dict[str, Any]:
     return {"focal_id": focal_id, "count": len(blocker_rows), "blockers": blocker_rows}
 
 
+@trace(name="best_overall_match_data", span_type=SpanType.TOOL)
 def best_overall_match_data(session: Session, k: int = 1) -> dict[str, Any]:
     ranked_view = pick_relation(
         session,
@@ -229,6 +298,7 @@ def find_panda_name_by_substring(session: Session, name_hint: str) -> str | None
     return str(result[0]["name"])
 
 
+@trace(name="panda_profile_data", span_type=SpanType.TOOL)
 def panda_profile_data(session: Session, panda_name: str) -> dict[str, Any] | None:
     relation = (
         "panda_profiles_agent"
