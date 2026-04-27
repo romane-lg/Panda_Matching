@@ -167,6 +167,17 @@ def _existing_scorer_names(experiment_id: str) -> set[str]:
     return {scorer.name for scorer in list_scorers(experiment_id=experiment_id)}
 
 
+def _make_bool_judge(*, name: str, model: str, instructions: str) -> Any:
+    judge = make_judge(
+        name=name,
+        model=model,
+        feedback_value_type=bool,
+        instructions=instructions,
+    )
+    judge.aggregations = ["mean"]
+    return judge
+
+
 def _register_scorer(
     scorer: Any,
     *,
@@ -198,36 +209,28 @@ def main() -> None:
 
     try:
         scorers = [
-            make_judge(
+            _make_bool_judge(
                 name="panda_correctness",
                 model=scorer_model,
-                feedback_value_type=bool,
-                aggregations=["mean"],
                 instructions=TASK_AWARE_CORRECTNESS_INSTRUCTIONS,
             ),
-            make_judge(
-                model=scorer_model,
+            _make_bool_judge(
                 name="panda_guidelines",
-                feedback_value_type=bool,
-                aggregations=["mean"],
+                model=scorer_model,
                 instructions=TASK_AWARE_GUIDELINES_INSTRUCTIONS,
             ),
             Safety(
                 name="panda_safety",
                 model=scorer_model,
             ),
-            make_judge(
+            _make_bool_judge(
                 name="grounded_in_tool_output",
                 model=scorer_model,
-                feedback_value_type=bool,
-                aggregations=["mean"],
                 instructions=GROUNDED_IN_TOOL_OUTPUT_INSTRUCTIONS,
             ),
-            make_judge(
+            _make_bool_judge(
                 name="answer_usefulness",
                 model=scorer_model,
-                feedback_value_type=bool,
-                aggregations=["mean"],
                 instructions=TASK_AWARE_USEFULNESS_INSTRUCTIONS,
             ),
         ]

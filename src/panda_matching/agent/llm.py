@@ -138,6 +138,11 @@ def llm_plan_message(message: str, memory: dict[str, str]) -> dict[str, Any] | N
         "count_eligible(), count_pandas(), count_status(status), count_sex(sex), "
         "count_curated(), count_matches_for_panda(panda_name). "
         "Use mode=tool for factual/data requests. "
+        "Use explain_match only when the user provides actual pair IDs such as 'explain 16 81'. "
+        "Do not use explain_match for natural-language ranking questions about names. "
+        "For questions like 'why is X first top match for Y', 'why is X only second for Y', "
+        "or 'who are Y's top matches', use top_matches with the focal panda name. "
+        "For direct profile or count questions, use panda_profile or the relevant count tool. "
         "Use mode=respond only for greetings/chitchat/help. "
         "JSON schema: "
         "{\"mode\":\"tool|respond\",\"tool\":\"...\",\"args\":{},\"response\":\"...\"}."
@@ -151,15 +156,57 @@ def llm_plan_message(message: str, memory: dict[str, str]) -> dict[str, Any] | N
     return extract_json_object(response_text)
 
 
+def _compose_task_instruction(user_message: str, tool: str) -> str:
+    lower = user_message.lower()
+    if tool == "top_matches":
+        return (
+            "For ranked match questions, answer with a numbered list. "
+            "Name each candidate explicitly and give one short causal reason "
+            "grounded in the tool output. "
+            "If the user asks why a candidate is first or second, explicitly "
+            "answer that why-question using ranking position, score differences, "
+            "and listed strengths or weaknesses when available."
+        )
+    if tool == "compare_candidates":
+        return (
+            "For comparison questions, name the better candidate directly, then "
+            "explain the tradeoff using only ranking or score evidence from the "
+            "tool output."
+        )
+    if tool == "panda_profile" and "fun fact" in lower:
+        return (
+            "For fun fact questions, give exactly one short engaging fact taken "
+            "directly from the profile data. Prefer facts from description_text, "
+            "babies_had_count, personality_text, or location fields. "
+            "Do not mention any facility, country, or history that is not present "
+            "in the tool output. "
+            "Do not end with a follow-up question."
+        )
+    if tool == "panda_profile":
+        return (
+            "For profile questions, answer the exact question directly in 1-3 "
+            "sentences using only the profile fields present in the tool output. "
+            "If a field is missing, say that you do not have that detail."
+        )
+    if tool == "blockers":
+        return "For blockers, summarize the main blocker patterns in plain language."
+    if tool.startswith("count_"):
+        return "For count questions, answer in one sentence with the count first."
+    return (
+        "Answer directly and stay grounded in the provided tool output. "
+        "Do not add facts that are not explicitly present."
+    )
+
+
 def llm_compose_answer(user_message: str, tool: str, tool_data: dict[str, Any]) -> str:
+    task_instruction = _compose_task_instruction(user_message, tool)
     system_prompt = (
         "You are a friendly panda breeding assistant. "
         "Answer clearly using only provided tool output. "
         "Do not invent facts not present in tool output. "
         "Never return JSON or raw field dumps. "
-        "When the tool returns ranked matches, present a short ranked list with a concise reason "
-        "for each candidate based on the score factors. "
-        "When the tool returns profile, blockers, or counts, summarize them in plain language."
+        "If a fact is not present in the tool output, do not guess. "
+        f"{task_instruction}"
     )
     user_prompt = json.dumps(
         {"user_message": user_message, "tool": tool, "tool_output": tool_data},
@@ -169,5 +216,5 @@ def llm_compose_answer(user_message: str, tool: str, tool_data: dict[str, Any]) 
     return invoke_databricks_llm(
         [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
         max_tokens=380,
-        temperature=0.3,
+        temperature=0.0,
     ).strip()

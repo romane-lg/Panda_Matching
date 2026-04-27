@@ -149,6 +149,59 @@ def _load_dataset_frame(
     return frame
 
 
+def _ensure_required_judge_credentials(scorers: list[Any]) -> None:
+    needs_openai = any(
+        str(getattr(scorer, "model", "") or "").startswith("openai:/")
+        for scorer in scorers
+    )
+    if needs_openai and not os.getenv("OPENAI_API_KEY"):
+        raise ValueError(
+            "OPENAI_API_KEY is required for the registered OpenAI-backed scorers. "
+            "Export it in the current shell before running paid benchmarks."
+        )
+
+
+def _log_missing_aggregate_metrics(result: Any) -> dict[str, float]:
+    tables = getattr(result, "tables", None)
+    if not isinstance(tables, dict):
+        return {}
+
+    eval_results = tables.get("eval_results")
+    if not isinstance(eval_results, pd.DataFrame):
+        return {}
+
+    recovered_metrics: dict[str, float] = {}
+    for column in eval_results.columns:
+        if not column.endswith("/value"):
+            continue
+        scorer_name = column[: -len("/value")]
+        series = eval_results[column].dropna()
+        if series.empty:
+            continue
+
+        def _normalize(value: Any) -> float | None:
+            if isinstance(value, bool):
+                return 1.0 if value else 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {"yes", "true", "pass", "passed", "correct"}:
+                    return 1.0
+                if lowered in {"no", "false", "fail", "failed", "incorrect"}:
+                    return 0.0
+            return None
+
+        normalized = [score for score in (_normalize(item) for item in series) if score is not None]
+        if not normalized:
+            continue
+        metric_name = f"{scorer_name}/mean"
+        metric_value = sum(normalized) / len(normalized)
+        recovered_metrics[metric_name] = metric_value
+        mlflow.log_metric(metric_name, metric_value)
+    return recovered_metrics
+
+
 @mlflow.trace(name="baseline_eval_predict")
 def _predict_fn(message: str) -> str:
     result = chat_agent(ChatRequest(message=message))
@@ -185,6 +238,7 @@ def main() -> None:
         raise ValueError("No scorers remain after applying --exclude-scorer filters.")
     if dataset_frame.empty:
         raise ValueError("No dataset rows remain after applying the current filters.")
+    _ensure_required_judge_credentials(scorers)
 
     with mlflow.start_run(run_name=args.run_name) as run:
         mlflow.log_param("dataset_name", args.dataset_name)
@@ -207,10 +261,17 @@ def main() -> None:
         print(f"Examples evaluated: {len(dataset_frame)}")
 
         metrics = getattr(result, "metrics", None)
+        recovered_metrics = _log_missing_aggregate_metrics(result)
         if isinstance(metrics, dict):
+            for key, value in recovered_metrics.items():
+                metrics.setdefault(key, value)
             print("Metrics:")
             for key in sorted(metrics):
                 print(f"  {key}: {metrics[key]}")
+        elif recovered_metrics:
+            print("Metrics:")
+            for key in sorted(recovered_metrics):
+                print(f"  {key}: {recovered_metrics[key]}")
 
         tables = getattr(result, "tables", None)
         if isinstance(tables, dict):

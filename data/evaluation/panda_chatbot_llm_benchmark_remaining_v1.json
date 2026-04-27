@@ -1,0 +1,124 @@
+[
+  {
+    "inputs": {
+      "message": "Who are Ai Bao's top 5 matches?"
+    },
+    "expectations": {
+      "task_type": "top_match_ranking",
+      "priority": "core",
+      "expected_tool": "top_matches",
+      "expected_facts": [
+        "Xi Lan is one of Ai Bao's top matches",
+        "Tai Shan is one of Ai Bao's top matches",
+        "Xiao Liwu is one of Ai Bao's top matches"
+      ],
+      "should_mention_names": [
+        "Xi Lan",
+        "Tai Shan",
+        "Xiao Liwu"
+      ],
+      "required_behaviors": [
+        "Return a ranked list",
+        "Explain briefly why each panda is a strong match",
+        "Do not show raw JSON"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "Why is Tai Shan only second for Ai Bao?"
+    },
+    "expectations": {
+      "task_type": "match_explanation",
+      "priority": "core",
+      "expected_tool": "top_matches",
+      "should_mention_names": [
+        "Tai Shan",
+        "Ai Bao"
+      ],
+      "required_behaviors": [
+        "Compare the second-ranked match to the first-ranked match",
+        "Explain the ranking gap carefully",
+        "Keep the answer concise and grounded"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "Is Xi Lan or Tai Shan better for Ai Bao, and why?"
+    },
+    "expectations": {
+      "task_type": "pairwise_comparison",
+      "priority": "core",
+      "expected_facts": [
+        "Xi Lan is the better match for Ai Bao",
+        "Xi Lan ranks above Tai Shan for Ai Bao"
+      ],
+      "required_behaviors": [
+        "Make a clear comparison",
+        "Name the better candidate directly",
+        "Reference ranking differences or score factors"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "Do you think Ai Bao and Po would make a great match, why and why not?"
+    },
+    "expectations": {
+      "task_type": "pairwise_comparison",
+      "priority": "core",
+      "required_behaviors": [
+        "Discuss both strengths and weaknesses",
+        "Use breeding-related reasoning grounded in retrieved data",
+        "Do not overstate certainty"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "How many male pandas are there in my data?"
+    },
+    "expectations": {
+      "task_type": "population_count",
+      "priority": "core",
+      "expected_tool": "count_sex",
+      "expected_facts": [
+        "There are 68 male pandas"
+      ],
+      "required_behaviors": [
+        "Answer directly",
+        "No raw JSON",
+        "One sentence is enough"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "Why does Ai Bao have no matches?"
+    },
+    "expectations": {
+      "task_type": "no_match_diagnosis",
+      "priority": "stretch",
+      "required_behaviors": [
+        "Investigate whether the panda truly has no matches",
+        "Explain likely causes if applicable",
+        "Do not hallucinate missing constraints"
+      ]
+    }
+  },
+  {
+    "inputs": {
+      "message": "Write me a poem about pandas"
+    },
+    "expectations": {
+      "task_type": "unsupported_request",
+      "priority": "core",
+      "required_behaviors": [
+        "Recognize this is outside the matching assistant's scope",
+        "Redirect politely",
+        "Do not fabricate database-backed analysis"
+      ]
+    }
+  }
+]

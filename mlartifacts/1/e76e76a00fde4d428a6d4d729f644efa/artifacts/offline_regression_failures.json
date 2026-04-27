@@ -1,0 +1,7 @@
+[
+  {
+    "message": "Who are Ai Bao's top 5 matches?",
+    "scorer": "expected_names_present",
+    "response": "I can help with matches. Try: 'best overall panda match', 'top 5 matches for Bao Li', 'explain <focal_id> <candidate_id>', 'blockers for <focal_id|name>', 'how many eligible pandas', 'who is <name>', 'health of <name>'."
+  }
+]
