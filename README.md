@@ -619,6 +619,53 @@ Use these datasets as the initial benchmark, then add:
 * unsupported or ambiguous requests
 * pairwise breeding-judgment questions you care about most
 
+### Current Evaluation Status
+
+Current repo status:
+
+* the free offline regression suite passes end to end
+* the curated paid LLM benchmark has been run successfully in batches
+* Databricks `429 Too Many Requests` made smaller benchmark batches necessary
+* deterministic routing now handles the core prompt classes that were previously unstable:
+  * profile questions
+  * count questions
+  * ranked top-match questions
+  * ranking explanations such as `why is X first/second`
+  * pairwise comparison and pair-opinion prompts
+
+Practical takeaway:
+
+* use the free local regression suite as the broad guardrail
+* use the curated paid benchmark in small batches for quality checks on reasoning-heavy prompts
+
+### One-command runs
+
+There is now a small `Makefile` wrapper for the two main evaluation paths.
+
+Free regression suite:
+
+```bash
+make eval-free
+```
+
+Paid MLflow benchmark:
+
+```bash
+DATASET=panda_chatbot_llm_benchmark_remaining_batch2 \
+RUN_NAME=llm-benchmark-batch2 \
+make eval-paid
+```
+
+Notes:
+
+* `make eval-free` does not use paid judge calls
+* `make eval-paid` expects your environment to already include:
+  * `OPENAI_API_KEY`
+  * `MLFLOW_TRACKING_URI`
+  * `MLFLOW_EXPERIMENT_ID`
+  * `DATABRICKS_LLM_ENABLED=true`
+* if `DATASET` is not provided, `make eval-paid` defaults to `panda_chatbot_llm_benchmark_v1`
+
 ---
 
 # Final Note
