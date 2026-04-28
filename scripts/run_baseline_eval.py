@@ -47,6 +47,15 @@ def _parse_args() -> argparse.Namespace:
         help="Optional limit for a smaller smoke-test run.",
     )
     parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help=(
+            "Optional 0-based starting row index after filtering. "
+            "Useful for running dataset batches without creating temporary files."
+        ),
+    )
+    parser.add_argument(
         "--run-name",
         default="baseline-chatbot-eval",
         help="MLflow run name for this evaluation.",
@@ -132,6 +141,7 @@ def _load_dataset_frame(
     experiment_id: str,
     max_examples: int | None,
     *,
+    start_index: int,
     labeled_only: bool,
 ) -> pd.DataFrame:
     dataset = _resolve_dataset(
@@ -142,6 +152,10 @@ def _load_dataset_frame(
     frame = dataset.to_df()
     if labeled_only:
         frame = frame[frame["expectations"].apply(_is_labeled_expectation)].copy()
+    if start_index < 0:
+        raise ValueError("--start-index must be zero or greater.")
+    if start_index:
+        frame = frame.iloc[start_index:].copy()
     if max_examples is not None:
         if max_examples <= 0:
             raise ValueError("--max-examples must be positive when provided.")
@@ -221,6 +235,7 @@ def main() -> None:
         args.dataset_id,
         experiment_id,
         args.max_examples,
+        start_index=args.start_index,
         labeled_only=args.labeled_only,
     )
     scorers = list_scorers(experiment_id=experiment_id)
@@ -243,6 +258,7 @@ def main() -> None:
     with mlflow.start_run(run_name=args.run_name) as run:
         mlflow.log_param("dataset_name", args.dataset_name)
         mlflow.log_param("num_examples", len(dataset_frame))
+        mlflow.log_param("start_index", args.start_index)
         mlflow.log_param("smoke_mode", args.smoke_mode)
         mlflow.log_param("labeled_only", args.labeled_only)
         if excluded:

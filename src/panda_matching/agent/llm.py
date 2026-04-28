@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
 
 from panda_matching.config import get_settings
 from panda_matching.observability import SpanType, start_span, trace
+
+
+class LLMRateLimitError(RuntimeError):
+    pass
+
+
+_LLM_COOLDOWN_UNTIL = 0.0
 
 
 def llm_enabled() -> bool:
@@ -44,12 +52,19 @@ def invoke_databricks_llm(
     max_tokens: int,
     temperature: float,
 ) -> str:
+    global _LLM_COOLDOWN_UNTIL
     settings = get_settings()
     host = settings.databricks_host
     token = settings.databricks_token
     endpoint = settings.databricks_llm_endpoint
     if not host or not token or not endpoint:
         raise RuntimeError("Databricks LLM is not configured")
+    now = time.time()
+    if now < _LLM_COOLDOWN_UNTIL:
+        remaining = max(0.0, _LLM_COOLDOWN_UNTIL - now)
+        raise LLMRateLimitError(
+            f"Databricks LLM cooldown active after 429; retry in {remaining:.1f}s"
+        )
 
     host = host.rstrip("/")
     payload = json.dumps(
@@ -66,35 +81,57 @@ def invoke_databricks_llm(
     body: str | None = None
     last_exc: Exception | None = None
     for url in invocation_urls:
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with start_span(
-                "databricks_http_request",
-                span_type=SpanType.TOOL,
-                attributes={"endpoint_url": url},
-            ) as span:
-                with urllib.request.urlopen(req, timeout=45) as resp:
+        for attempt in range(settings.databricks_llm_max_retries + 1):
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with start_span(
+                    "databricks_http_request",
+                    span_type=SpanType.TOOL,
+                    attributes={
+                        "endpoint_url": url,
+                        "retry_attempt": attempt,
+                    },
+                ) as span:
+                    with urllib.request.urlopen(req, timeout=45) as resp:
+                        if span is not None:
+                            span.set_attribute("http_status_code", resp.status)
+                        body = resp.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as exc:
+                if span is not None:
+                    span.set_attribute("http_status_code", exc.code)
+                last_exc = exc
+                if exc.code == 404:
+                    break
+                if exc.code == 429:
+                    _LLM_COOLDOWN_UNTIL = time.time() + settings.databricks_llm_cooldown_seconds
                     if span is not None:
-                        span.set_attribute("http_status_code", resp.status)
-                    body = resp.read().decode("utf-8")
+                        span.set_attribute("rate_limited", True)
+                        span.set_attribute(
+                            "cooldown_seconds",
+                            settings.databricks_llm_cooldown_seconds,
+                        )
+                    if attempt < settings.databricks_llm_max_retries:
+                        sleep_seconds = (
+                            settings.databricks_llm_retry_backoff_seconds * (attempt + 1)
+                        )
+                        time.sleep(sleep_seconds)
+                        continue
+                    raise LLMRateLimitError(f"Databricks LLM call failed: {exc}") from exc
+                raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
+        if body is not None:
+            _LLM_COOLDOWN_UNTIL = 0.0
             break
-        except urllib.error.HTTPError as exc:
-            if span is not None:
-                span.set_attribute("http_status_code", exc.code)
-            last_exc = exc
-            if exc.code == 404:
-                continue
-            raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Databricks LLM call failed: {exc}") from exc
 
     if body is None:
         raise RuntimeError(f"Databricks LLM call failed: {last_exc}")

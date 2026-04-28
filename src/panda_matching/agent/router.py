@@ -8,7 +8,12 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from panda_matching.agent.llm import llm_compose_answer, llm_enabled, llm_plan_message
+from panda_matching.agent.llm import (
+    LLMRateLimitError,
+    llm_compose_answer,
+    llm_enabled,
+    llm_plan_message,
+)
 from panda_matching.agent.tools import (
     best_overall_match_data,
     blockers_data,
@@ -25,7 +30,7 @@ from panda_matching.agent.tools import (
     scalar_int,
     top_matches_data,
 )
-from panda_matching.observability import SpanType, trace
+from panda_matching.observability import SpanType, start_span, trace
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +40,18 @@ class AgentTurn:
     intent: str
     response: str
     data: dict[str, Any] | None = None
+
+
+def _record_llm_fallback(reason: str, phase: str) -> None:
+    with start_span(
+        "llm_fallback",
+        span_type=SpanType.TOOL,
+        attributes={
+            "llm_fallback_reason": reason,
+            "llm_fallback_phase": phase,
+        },
+    ):
+        pass
 
 
 def _rank_number(row: dict[str, Any]) -> int | None:
@@ -611,7 +628,15 @@ def llm_chat_response(
 
     try:
         plan = llm_plan_message(message=message, memory=memory)
+    except LLMRateLimitError:
+        _record_llm_fallback("429", "planning")
+        logger.exception(
+            "LLM planning failed due to rate limit; "
+            "falling back to deterministic chat path"
+        )
+        return None
     except Exception:
+        _record_llm_fallback("planner_error", "planning")
         logger.exception("LLM planning failed; falling back to deterministic chat path")
         return None
     if not plan:
@@ -639,10 +664,19 @@ def llm_chat_response(
             tool=tool,
             args=args,
         )
+    except LLMRateLimitError:
+        _record_llm_fallback("429", f"tool:{tool}")
+        logger.exception(
+            "LLM tool execution failed due to rate limit; "
+            "falling back to deterministic chat path"
+        )
+        return None
     except HTTPException:
+        _record_llm_fallback("tool_http_error", f"tool:{tool}")
         logger.exception("LLM tool execution failed; falling back to deterministic chat path")
         return None
     except Exception:
+        _record_llm_fallback("tool_error", f"tool:{tool}")
         logger.exception("Unexpected LLM tool failure; falling back to deterministic chat path")
         return None
 
