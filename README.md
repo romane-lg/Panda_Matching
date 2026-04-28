@@ -469,6 +469,21 @@ Main endpoints:
 
 This keeps factual answers grounded in your SQL pipeline while improving conversational quality.
 
+In practice, the chatbot now uses a **split-response architecture**:
+
+* **Deterministic rendering first** for simple and high-risk factual prompts:
+  * profile questions (`who is`, age, location, health, personality, fun facts)
+  * counts (`how many male pandas`, `how many eligible pandas`, total pandas, etc.)
+  * unsupported requests (`write me a poem`, weather, off-topic prompts)
+  * structured ranking/comparison prompts where the SQL output is already sufficient
+* **LLM-assisted responses** only where free-form reasoning is actually useful:
+  * richer top-match summaries
+  * pairwise match reasoning
+  * ranking explanations
+  * ambiguous or multi-step conversational prompts
+
+This design avoids hallucinations on straightforward factual answers while still letting the LLM improve the parts of the product that actually benefit from natural-language reasoning.
+
 The browser chat UI is now user-facing:
 
 * ranked matches are returned as readable summaries
@@ -509,17 +524,22 @@ Notes:
 * Tool execution remains deterministic (`top_matches`, `blockers`, `explain_match`, etc.).
 * Chat memory is persisted in DB, so sessions survive restarts and multi-worker deployments.
 * If you are testing LLM mode, successful responses usually use intents prefixed with `llm_` such as `llm_top_matches`.
+* If Databricks returns `429 Too Many Requests`, the app logs the failure and falls back to deterministic routing and rendering instead of returning an empty answer.
 
 ---
 
 # Evaluation Starter
 
-The repo now includes a starter GenAI evaluation dataset draft for the chatbot.
+The repo now includes both a **free full regression suite** and a **small paid LLM quality benchmark**.
 
 Files:
 
-* `data/evaluation/panda_chatbot_eval_v1.json` – starter hybrid evaluation cases
+* `data/evaluation/panda_chatbot_eval_v1.json` – full hybrid evaluation set for broad regression coverage
+* `data/evaluation/panda_chatbot_llm_benchmark_v1.json` – curated LLM quality benchmark set
+* `scripts/run_offline_regression_suite.py` – free programmatic regression suite
 * `scripts/create_mlflow_eval_dataset.py` – creates or updates an MLflow evaluation dataset using `mlflow.genai.datasets.create_dataset()`
+* `scripts/register_mlflow_scorers.py` – registers MLflow scorers
+* `scripts/run_baseline_eval.py` – runs MLflow `mlflow.genai.evaluate()` against a named dataset
 
 Recommended workflow:
 
@@ -548,12 +568,51 @@ export MLFLOW_EXPERIMENT_ID=<your_experiment_id>
 uv run python scripts/create_mlflow_eval_dataset.py
 ```
 
-The starter dataset is intentionally hybrid:
+### Free full regression suite
+
+Use the offline suite for broad, cheap, repeatable regression checks:
+
+```bash
+uv run python scripts/run_offline_regression_suite.py --local-only
+```
+
+This suite avoids paid model calls and checks things like:
+
+* no exceptions
+* no raw JSON
+* no debug artifacts
+* non-empty answers
+* expected counts where labeled
+* expected names in ranking answers
+* pairwise winner matching
+* approximate age wording
+
+### Paid LLM quality benchmark
+
+Use the curated MLflow benchmark only for prompts where the LLM should add value:
+
+```bash
+set -a; source .env; set +a
+export OPENAI_API_KEY=<your_key>
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5051
+export MLFLOW_EXPERIMENT_ID=1
+export DATABRICKS_LLM_ENABLED=true
+
+uv run python scripts/run_baseline_eval.py \
+  --dataset-name panda_chatbot_llm_benchmark_v1 \
+  --max-examples 3 \
+  --run-name llm-benchmark-smoke \
+  --exclude-scorer panda_tool_call_correctness
+```
+
+The benchmark should be run in small batches if Databricks serving is rate-limited.
+
+The full regression dataset is intentionally hybrid:
 
 * some cases contain hard factual expectations such as count answers
 * others focus on behaviors such as grounding, concise ranked summaries, no raw JSON, and safe fallback behavior
 
-Use this dataset as the initial benchmark, then add:
+Use these datasets as the initial benchmark, then add:
 
 * production failure cases from real traces
 * follow-up memory cases

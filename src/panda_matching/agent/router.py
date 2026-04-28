@@ -81,6 +81,15 @@ def _clean_factor(text: Any) -> str:
     return str(text or "").strip().strip(".")
 
 
+def _maybe_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _format_rank_score(row: dict[str, Any]) -> str:
     rank = _rank_number(row)
     score = _score_number(row)
@@ -90,6 +99,170 @@ def _format_rank_score(row: dict[str, Any]) -> str:
     if score is not None:
         parts.append(f"score {score:.3f}")
     return ", ".join(parts)
+
+
+def _wants_numeric_detail(message: str) -> bool:
+    lowered = message.lower()
+    detail_markers = (
+        "detail",
+        "detailed",
+        "breakdown",
+        "break down",
+        "score",
+        "scores",
+        "component",
+        "components",
+        "numbers",
+        "numeric",
+        "exactly why",
+    )
+    return any(marker in lowered for marker in detail_markers)
+
+
+def _qualitative_band(value: float | None) -> str | None:
+    if value is None:
+        return None
+    if value >= 0.8:
+        return "very strong"
+    if value >= 0.65:
+        return "strong"
+    if value >= 0.5:
+        return "fairly solid"
+    if value >= 0.35:
+        return "mixed"
+    return "weak"
+
+
+def _component_takeaway(row: dict[str, Any]) -> str | None:
+    bio = _qualitative_band(_maybe_float(row.get("bio_component")))
+    behavior = _qualitative_band(_maybe_float(row.get("behavior_component")))
+    logistics = _qualitative_band(_maybe_float(row.get("logistics_component")))
+
+    parts: list[str] = []
+    if bio:
+        parts.append(f"the biological fit looks {bio}")
+    if behavior:
+        parts.append(f"the behavior fit looks {behavior}")
+    if logistics:
+        parts.append(f"logistically the pairing looks {logistics}")
+
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]}, and {parts[1]}"
+    return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _natural_strengths(row: dict[str, Any]) -> list[str]:
+    strengths: list[str] = []
+
+    positive = _clean_factor(row.get("top_positive_factors"))
+    if positive:
+        strengths.append(f"the clearest strength is {positive}")
+
+    age_gap_years = _maybe_float(row.get("age_gap_years"))
+    focal_age = _maybe_float(row.get("focal_panda_age"))
+    candidate_age = _maybe_float(row.get("candidate_panda_age"))
+    if age_gap_years is not None:
+        strengths.append(f"the age gap is a manageable {age_gap_years:.0f} years")
+    if (
+        row.get("candidate_panda_sex") == "male"
+        and focal_age is not None
+        and candidate_age is not None
+        and candidate_age > focal_age
+        and int(row.get("male_older_bonus") or 0) > 0
+    ):
+        strengths.append(
+            "the older-male / younger-female setup is also working in the pair's favor"
+        )
+
+    candidate_babies = row.get("candidate_panda_babies")
+    zero_babies_bonus = int(row.get("zero_babies_bonus") or 0)
+    if candidate_babies == 0 and zero_babies_bonus > 0:
+        candidate_name = str(row.get("candidate_panda_name") or "the candidate")
+        strengths.append(
+            f"{candidate_name} has no recorded cubs yet, which can make the pairing "
+            "more promising than one involving a male that has already reproduced"
+        )
+
+    health_penalty = _maybe_float(row.get("health_penalty_score"))
+    if health_penalty is not None and health_penalty <= 0.1:
+        strengths.append("there are very few health concerns weighing the pair down")
+
+    component_takeaway = _component_takeaway(row)
+    if component_takeaway:
+        strengths.append(
+            component_takeaway.replace("the biological fit looks", "biologically the pair looks")
+            .replace("the behavior fit looks", "behaviorally the pair looks")
+            .replace("logistically the pairing looks", "logistically the pair looks")
+        )
+
+    return strengths
+
+
+def _natural_tradeoff(row: dict[str, Any]) -> str | None:
+    negative = _clean_factor(row.get("top_negative_factors"))
+    if negative and negative.lower() != "no major penalties":
+        return (
+            f"The softer spot is {negative}, so the pair looks less convincing "
+            "on personality than it does on health and breeding factors."
+        )
+
+    return None
+
+
+def _format_section(title: str, items: list[str]) -> str:
+    cleaned = [item.strip().rstrip(".") + "." for item in items if item and item.strip()]
+    if not cleaned:
+        return ""
+    return title + "\n" + "\n".join(f"- {item}" for item in cleaned)
+
+
+def _relative_gap_reasons(
+    candidate_row: dict[str, Any],
+    top_row: dict[str, Any] | None,
+) -> list[str]:
+    if not top_row or top_row is candidate_row:
+        return []
+
+    reasons: list[str] = []
+    top_name = str(top_row.get("candidate_panda_name") or "the first-ranked match")
+
+    candidate_age_gap = _maybe_float(candidate_row.get("age_gap_years"))
+    top_age_gap = _maybe_float(top_row.get("age_gap_years"))
+    if (
+        candidate_age_gap is not None
+        and top_age_gap is not None
+        and candidate_age_gap - top_age_gap >= 2
+    ):
+        reasons.append(f"{top_name} has the tighter age gap")
+
+    candidate_bio = _maybe_float(candidate_row.get("bio_component"))
+    top_bio = _maybe_float(top_row.get("bio_component"))
+    if candidate_bio is not None and top_bio is not None and top_bio - candidate_bio >= 0.04:
+        reasons.append(f"{top_name} also looks a bit stronger biologically")
+
+    candidate_behavior = _maybe_float(candidate_row.get("behavior_component"))
+    top_behavior = _maybe_float(top_row.get("behavior_component"))
+    if (
+        candidate_behavior is not None
+        and top_behavior is not None
+        and top_behavior - candidate_behavior >= 0.04
+    ):
+        reasons.append(f"{top_name} appears to have the better behavioral fit")
+
+    candidate_health_penalty = _maybe_float(candidate_row.get("health_penalty_score"))
+    top_health_penalty = _maybe_float(top_row.get("health_penalty_score"))
+    if (
+        candidate_health_penalty is not None
+        and top_health_penalty is not None
+        and candidate_health_penalty - top_health_penalty >= 0.02
+    ):
+        reasons.append(f"{top_name} carries slightly fewer health concerns")
+
+    return reasons
 
 
 def _format_component_sentence(row: dict[str, Any]) -> str | None:
@@ -122,6 +295,7 @@ def _deterministic_top_matches_response(
     focal_name: str,
     matches: list[dict[str, Any]],
     requested_k: int,
+    detailed: bool = False,
 ) -> str:
     if not matches:
         return f"I could not find any ranked matches for {focal_name}."
@@ -134,9 +308,8 @@ def _deterministic_top_matches_response(
     ]
     lead = selected[0]
     lead_name = str(lead.get("candidate_panda_name") or "the current leader").strip()
-    lead_positive = _clean_factor(lead.get("top_positive_factors"))
-    lead_negative = _clean_factor(lead.get("top_negative_factors"))
-    lead_score = _score_number(lead)
+    strengths = _natural_strengths(lead)
+    tradeoff = _natural_tradeoff(lead)
 
     if len(top_names) == 1:
         intro = f"{focal_name}'s current top match is {top_names[0]}."
@@ -149,44 +322,38 @@ def _deterministic_top_matches_response(
             + f", and {top_names[-1]}."
         )
 
-    lead_sentence = f"{lead_name} leads the list"
-    if lead_score is not None:
-        lead_sentence += f" with a score of {lead_score:.3f}"
-    if lead_positive:
-        lead_sentence += f", helped most by {lead_positive}"
-    lead_sentence += "."
+    intro_lines = [intro]
+    if strengths:
+        intro_lines.append(f"{lead_name} leads the list mainly because {strengths[0]}.")
 
     followup: list[str] = []
     if len(selected) > 1:
         runner_up = selected[1]
         runner_name = str(runner_up.get("candidate_panda_name") or "the next candidate").strip()
-        runner_score = _score_number(runner_up)
-        if lead_score is not None and runner_score is not None:
-            gap = lead_score - runner_score
-            followup.append(
-                f"{runner_name} is next, trailing by {gap:.3f} points, "
-                "so the top of the list is fairly tight."
-            )
-        else:
-            followup.append(f"{runner_name} sits right behind in the current ranking.")
-
-    if lead_negative and lead_negative.lower() != "no major penalties":
         followup.append(
-            f"The main tradeoff even for {lead_name} is {lead_negative}, "
-            "but the stronger positives still keep the pair at the top."
-        )
-    elif lead_negative:
-        followup.append(
-            f"There are no major penalties flagged for {lead_name} in the current scoring view."
+            f"{runner_name} is right behind, so the top of the list is fairly tight."
         )
 
-    return " ".join([intro, lead_sentence, *followup]).strip()
+    if len(strengths) > 1:
+        followup.extend(strengths[1:])
+
+    sections = ["\n".join(intro_lines)]
+    why_section = _format_section("Why the first match is leading:", followup[:4])
+    if why_section:
+        sections.append(why_section)
+    if tradeoff:
+        tradeoff_section = _format_section("Main hesitation:", [tradeoff])
+        if tradeoff_section:
+            sections.append(tradeoff_section)
+
+    return "\n\n".join(section for section in sections if section).strip()
 
 
 def _deterministic_pairwise_response(
     *,
     focal_name: str,
     result: dict[str, Any],
+    detailed: bool = False,
 ) -> str:
     better = result["better_match"]
     assert better is not None
@@ -201,58 +368,94 @@ def _deterministic_pairwise_response(
         name = str(row.get("candidate_panda_name") or "").strip()
         if not name:
             return None
-        positive = _clean_factor(row.get("top_positive_factors"))
-        negative = _clean_factor(row.get("top_negative_factors"))
         rank = _rank_number(row)
-        score = _score_number(row)
+        strengths = _natural_strengths(row)
+        tradeoff = _natural_tradeoff(row)
         sentence = name
-        if rank is not None and score is not None:
-            sentence += f" sits at #{rank} with a score of {score:.3f}"
-        elif rank is not None:
+        if rank is not None:
             sentence += f" sits at #{rank}"
-        if positive:
-            sentence += f", and its clearest strength is {positive}"
+        if strengths:
+            strength_text = strengths[0].removeprefix("the clearest strength is ")
+            sentence += f", and its clearest strength is {strength_text}"
         sentence += "."
-        if negative and negative.lower() != "no major penalties":
-            sentence += f" The main drawback in the row is {negative}."
+        if len(strengths) > 1:
+            sentence += " It also helps that " + "; ".join(strengths[1:]) + "."
+        if tradeoff:
+            sentence += f" {tradeoff}"
         return sentence
 
     better_rank = _rank_number(better)
-    better_score = _score_number(better)
     other = candidate_b if better is candidate_a else candidate_a
     other_name = (
         str(other.get("candidate_panda_name") or "").strip()
         if other is not None
         else "the other candidate"
     )
-    other_score = _score_number(other) if other is not None else None
 
     intro = (
         f"Between {result['candidate_a_name']} and {result['candidate_b_name']}, "
         f"{better_name} looks like the stronger match for {focal_name} right now."
     )
     comparison = ""
-    if better_rank is not None and better_score is not None:
-        comparison = (
-            f"{better_name} is currently ranked #{better_rank} "
-            f"with a score of {better_score:.3f}."
-        )
-        if other_score is not None:
-            comparison += (
-                f" That puts {other_name} behind by {better_score - other_score:.3f} points, "
-                "so the margin is real but not huge."
-            )
+    if better_rank is not None:
+        comparison = f"{better_name} is currently ahead in the ranking."
+        comparison += f" The margin over {other_name} is noticeable, but not huge."
 
-    pieces = [intro]
-    if comparison:
-        pieces.append(comparison)
     better_summary = _summary(better)
     other_summary = _summary(other)
+    sections = [intro]
+    if comparison:
+        sections.append(comparison)
     if better_summary:
-        pieces.append(better_summary)
+        sections.append(_format_section(f"Why {better_name} is ahead:", [better_summary]))
     if other_summary:
-        pieces.append(f"For comparison, {other_summary}")
-    return " ".join(pieces)
+        sections.append(_format_section(f"How {other_name} compares:", [other_summary]))
+    return "\n\n".join(section for section in sections if section)
+
+
+def _deterministic_pair_opinion_response(
+    *,
+    focal_name: str,
+    candidate_name: str,
+    candidate_row: dict[str, Any],
+    top_row: dict[str, Any] | None,
+) -> str:
+    rank = _rank_number(candidate_row)
+    strengths = _natural_strengths(candidate_row)
+    tradeoff = _natural_tradeoff(candidate_row)
+    gap_reasons = _relative_gap_reasons(candidate_row, top_row)
+
+    if rank == 1:
+        intro = f"Yes — {candidate_name} looks like an excellent match for {focal_name}."
+    elif rank is not None and rank <= 3:
+        intro = (
+            f"{candidate_name} does look like a strong match for {focal_name}, "
+            "just not the very strongest one in the current ranking."
+        )
+    elif rank is not None and rank <= 5:
+        intro = (
+            f"{candidate_name} looks like a reasonable match for {focal_name}, "
+            "but there are stronger options ahead of it."
+        )
+    else:
+        intro = (
+            f"{candidate_name} does not look like one of the strongest matches for "
+            f"{focal_name} in the current data."
+        )
+
+    sections = [intro]
+    if strengths:
+        sections.append(_format_section("Why it could work:", strengths[:5]))
+    why_not_items: list[str] = []
+    if gap_reasons:
+        why_not_items.extend(gap_reasons[:3])
+    elif rank is not None and rank > 1:
+        why_not_items.append("there are stronger-ranked options ahead of this pairing")
+    if tradeoff:
+        why_not_items.append(tradeoff)
+    if why_not_items:
+        sections.append(_format_section("Why it may not be the best option:", why_not_items))
+    return "\n\n".join(section for section in sections if section)
 
 
 def _deterministic_no_match_response(
@@ -301,59 +504,42 @@ def _deterministic_rank_explanation(
     candidate_name: str,
     candidate_row: dict[str, Any],
     top_row: dict[str, Any] | None,
+    detailed: bool = False,
 ) -> str:
     rank = _rank_number(candidate_row)
-    score = _score_number(candidate_row)
-    positive = _clean_factor(candidate_row.get("top_positive_factors"))
-    negative = _clean_factor(candidate_row.get("top_negative_factors"))
-    if rank is not None and score is not None:
-        intro = f"{candidate_name} ranks #{rank} for {focal_name} with a score of {score:.3f}."
+    strengths = _natural_strengths(candidate_row)
+    tradeoff = _natural_tradeoff(candidate_row)
+    if rank == 1:
+        intro = f"{candidate_name} comes out as {focal_name}'s top match right now."
     elif rank is not None:
-        intro = f"{candidate_name} ranks #{rank} for {focal_name}."
+        intro = f"{candidate_name} currently sits at #{rank} for {focal_name}."
     else:
         intro = f"{candidate_name} is one of the top-ranked matches for {focal_name}."
-
-    strengths: list[str] = []
-    if positive:
-        strengths.append(f"the biggest strength is {positive}")
-
-    component_sentence = _format_component_sentence(candidate_row)
-    if component_sentence:
-        strengths.append("the score is also being supported by " + component_sentence)
 
     comparison: str | None = None
     if top_row is not None and top_row is not candidate_row:
         top_name = str(top_row.get("candidate_panda_name") or "the top candidate").strip()
-        top_score = _score_number(top_row)
-        if score is not None and top_score is not None:
-            gap = top_score - score
+        gap_reasons = _relative_gap_reasons(candidate_row, top_row)
+        if gap_reasons:
             comparison = (
-                f"It sits behind {top_name} by only {gap:.3f} points, so the gap is narrow "
-                "rather than a major drop in compatibility."
+                f"It sits just behind {top_name}. The main difference is that "
+                + "; ".join(gap_reasons[:2])
+                + "."
             )
         else:
-            comparison = f"It sits just behind {top_name} in the ranking."
+            comparison = f"It sits just behind {top_name}, and the gap is fairly small."
 
-    caveat: str | None = None
-    if negative and negative.lower() != "no major penalties":
-        caveat = (
-            f"The main tradeoff is {negative}, but that drawback is not "
-            "strong enough to cancel out the positives."
-        )
-    elif negative:
-        caveat = "There are no major penalties flagged in the current scoring view."
-
-    if not strengths and not comparison and not caveat:
+    if not strengths and not comparison and not tradeoff:
         return intro
 
-    pieces = [intro]
+    sections = [intro]
     if strengths:
-        pieces.append("What stands out most is that " + "; ".join(strengths) + ".")
+        sections.append(_format_section("Main reasons:", strengths[:5]))
     if comparison:
-        pieces.append(comparison)
-    if caveat:
-        pieces.append(caveat)
-    return " ".join(pieces)
+        sections.append(_format_section("Ranking context:", [comparison]))
+    if tradeoff:
+        sections.append(_format_section("Main hesitation:", [tradeoff]))
+    return "\n\n".join(section for section in sections if section)
 
 
 def _resolve_subject_pair(
@@ -857,43 +1043,49 @@ def unsupported_chat_response(message: str) -> AgentTurn | None:
 @trace(name="route_chat_message", span_type=SpanType.AGENT)
 def route_chat_message(session: Session, message: str, memory: dict[str, str]) -> AgentTurn:
     lower = message.lower()
+    query_text = re.split(r"[.?!]\s+", message.strip(), maxsplit=1)[0].strip()
 
-    explain_match_pattern = re.match(r"^(?:explain|why)\s+(\S+)\s+(\S+)$", lower)
+    explain_match_pattern = re.match(r"^(?:explain|why)\s+(\S+)\s+(\S+)$", query_text.lower())
     top_pattern = re.search(
         r"(?:top|best)\s*(\d+)?\s*matches(?:\s+for)?\s+(.+)$",
-        message,
+        query_text,
         flags=re.IGNORECASE,
     )
     possessive_top_pattern = re.match(
         r"^(?:who\s+are\s+)?(.+?)'s\s+(?:top|best)\s*(\d+)?\s+matches\??$",
-        message.strip(),
+        query_text,
         flags=re.IGNORECASE,
     )
     first_match_explanation_pattern = re.match(
         r"^why\s+is\s+(.+)\s+(.+?)'s\s+first\s+top\s+match\??$",
-        message.strip(),
+        query_text,
         flags=re.IGNORECASE,
     )
     second_match_explanation_pattern = re.match(
         r"^why\s+is\s+(.+?)\s+only\s+second\s+for\s+(.+?)\??$",
-        message.strip(),
+        query_text,
         flags=re.IGNORECASE,
     )
     no_matches_pattern = re.match(
         r"^why\s+does\s+(.+?)\s+have\s+no\s+matches\??$",
-        message.strip(),
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    great_match_pattern = re.match(
+        r"^do\s+you\s+think\s+(.+?)\s+and\s+(.+?)\s+would\s+make\s+a\s+great\s+match(?:,?\s*why(?:\s+and\s+why\s+not)?)?\??$",
+        query_text,
         flags=re.IGNORECASE,
     )
     pairwise_pattern = re.match(
         r"^is\s+(.+?)\s+or\s+(.+?)\s+better\s+for\s+(.+?)(?:,?\s*and why)?\??$",
-        message.strip(),
+        query_text,
         flags=re.IGNORECASE,
     )
     global_best_pattern = re.search(
         r"(?:best overall|overall best|best match across all|across all pandas|global best)",
         lower,
     )
-    blockers_pattern = re.match(r"^blockers(?:\s+for)?\s+(.+)$", message, flags=re.IGNORECASE)
+    blockers_pattern = re.match(r"^blockers(?:\s+for)?\s+(.+)$", query_text, flags=re.IGNORECASE)
     profile_name = extract_name_from_question(message)
     asks_age = "how old" in lower or "age of" in lower
     asks_location = "where is" in lower or "location of" in lower
@@ -966,10 +1158,6 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
 
         return AgentTurn(intent="panda_info", response=response, data={"profile": profile})
 
-    llm_response = llm_chat_response(session, message=message, memory=memory)
-    if llm_response is not None:
-        return llm_response
-
     if global_best_pattern:
         result = best_overall_match_data(session, k=1)
         if result["count"] == 0:
@@ -1018,8 +1206,43 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             response=_deterministic_pairwise_response(
                 focal_name=resolved_focal,
                 result=result,
+                detailed=_wants_numeric_detail(message),
             ),
             data=result,
+        )
+
+    if great_match_pattern:
+        focal_name = great_match_pattern.group(1).strip(" ?.")
+        candidate_name = great_match_pattern.group(2).strip(" ?.")
+        resolved_focal = find_panda_name_by_substring(session, focal_name) or focal_name
+        result = top_matches_data(session, panda_name=resolved_focal, k=20)
+        matches = result["matches"]
+        candidate_row = _find_candidate_row(matches, candidate_name)
+        top_row = matches[0] if matches else None
+        if not candidate_row:
+            return AgentTurn(
+                intent="pairwise_match_not_found",
+                response=(
+                    f"I could not find {candidate_name} in the current ranked matches for "
+                    f"{resolved_focal}, so I cannot give a grounded comparison yet."
+                ),
+                data=result,
+            )
+        memory["last_panda_name"] = resolved_focal
+        return AgentTurn(
+            intent="pairwise_match_opinion",
+            response=_deterministic_pair_opinion_response(
+                focal_name=resolved_focal,
+                candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
+                candidate_row=candidate_row,
+                top_row=top_row,
+            ),
+            data={
+                "panda_name": resolved_focal,
+                "candidate_name": candidate_name,
+                "match": candidate_row,
+                "matches": matches,
+            },
         )
 
     if top_pattern:
@@ -1051,6 +1274,7 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 focal_name=panda_name,
                 matches=result["matches"],
                 requested_k=k,
+                detailed=_wants_numeric_detail(message),
             ),
             data=result,
         )
@@ -1077,6 +1301,7 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 focal_name=resolved_name,
                 matches=result["matches"],
                 requested_k=k,
+                detailed=_wants_numeric_detail(message),
             ),
             data=result,
         )
@@ -1111,6 +1336,7 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
                 candidate_row=candidate_row,
                 top_row=top_row,
+                detailed=_wants_numeric_detail(message),
             ),
             data={
                 "panda_name": resolved_name,
@@ -1144,6 +1370,7 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
                 candidate_row=candidate_row,
                 top_row=top_row,
+                detailed=_wants_numeric_detail(message),
             ),
             data={
                 "panda_name": resolved_name,
@@ -1159,19 +1386,18 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         if top["count"] > 0:
             lead = top["matches"][0]
             lead_name = str(lead.get("candidate_panda_name") or "the current top match").strip()
-            lead_score = _score_number(lead)
             lead_positive = _clean_factor(lead.get("top_positive_factors"))
-            response = f"{resolved_name} actually does have ranked matches in the current data."
-            if lead_score is not None:
-                response += (
-                    f" Right now {lead_name} is the top match "
-                    f"with a score of {lead_score:.3f}"
-                )
-            else:
-                response += f" Right now {lead_name} is the top match"
+            response = (
+                f"In the current ranked view, {resolved_name} does have matches. "
+                f"Right now {lead_name} is the top match"
+            )
             if lead_positive:
-                response += f", helped by {lead_positive}"
-            response += "."
+                response += f", helped mainly by {lead_positive}"
+            response += (
+                ". If you were expecting no matches, the mismatch is probably coming "
+                "from a different filter, a different table, or an earlier stage of "
+                f"the pipeline rather than from {resolved_name} having no ranked options."
+            )
             return AgentTurn(
                 intent="no_match_diagnosis",
                 response=response,
@@ -1222,6 +1448,10 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             response=f"I found {result['count']} blocker rows for focal_id={focal_id}.",
             data=result,
         )
+
+    llm_response = llm_chat_response(session, message=message, memory=memory)
+    if llm_response is not None:
+        return llm_response
 
     if lower in {"help", "commands"}:
         return AgentTurn(
