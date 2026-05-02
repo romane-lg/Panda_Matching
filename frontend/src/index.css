@@ -1,0 +1,25 @@
+:root {
+  font-family:
+    "Google Sans", "Product Sans", Arial, ui-sans-serif, system-ui, sans-serif;
+  color: #1f2937;
+  background: #f7f4ed;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}

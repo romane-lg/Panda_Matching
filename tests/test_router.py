@@ -126,6 +126,61 @@ def test_pair_opinion_prompt_includes_why_not_section(monkeypatch) -> None:
     assert "Xi Lan also looks a bit stronger biologically" in turn.response
 
 
+def test_most_eligible_panda_routes_to_best_overall_before_profile_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: None)
+    monkeypatch.setattr(
+        router,
+        "best_overall_match_data",
+        lambda *_args, **_kwargs: {
+            "count": 1,
+            "matches": [
+                {
+                    "focal_panda_name": "Ai Bao",
+                    "candidate_panda_name": "Xi Lan",
+                    "final_score_v2": 0.91,
+                    "top_positive_factors": "low combined health risk",
+                    "top_negative_factors": "weak personality overlap",
+                    "age_gap_years": 5,
+                    "bio_component": 0.86,
+                    "behavior_component": 0.528,
+                    "logistics_component": 0.47,
+                }
+            ],
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(object(), "who is the most eligible panda", {})
+
+    assert turn.intent == "best_overall"
+    assert "Ai Bao with Xi Lan" in turn.response
+    assert "I could not find a panda matching" not in turn.response
+
+
+def test_broad_match_prompt_routes_to_best_overall(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "best_overall_match_data",
+        lambda *_args, **_kwargs: {
+            "count": 1,
+            "matches": [
+                {
+                    "focal_panda_name": "Ai Bao",
+                    "candidate_panda_name": "Xi Lan",
+                    "final_score_v2": 0.91,
+                    "top_positive_factors": "low combined health risk",
+                }
+            ],
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(object(), "tell me about a panda match", {})
+
+    assert turn.intent == "best_overall"
+    assert "strongest overall directional match" in turn.response
+
+
 def test_rate_limited_llm_falls_back_to_help(monkeypatch) -> None:
     fallback_events: list[tuple[str, str]] = []
     monkeypatch.setattr(router, "llm_enabled", lambda: True)

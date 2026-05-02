@@ -366,6 +366,28 @@ def _deterministic_top_matches_response(
     return "\n\n".join(section for section in sections if section).strip()
 
 
+def _deterministic_best_overall_response(row: dict[str, Any]) -> str:
+    focal_name = str(row.get("focal_panda_name") or row.get("name") or "the focal panda").strip()
+    candidate_name = str(row.get("candidate_panda_name") or "the candidate panda").strip()
+    rank_score = _format_rank_score(row)
+    strengths = _natural_strengths(row)
+    tradeoff = _natural_tradeoff(row)
+
+    intro = (
+        f"The strongest overall directional match I found is {focal_name} with "
+        f"{candidate_name}."
+    )
+    if rank_score:
+        intro += f" It is currently ranked with {rank_score}."
+
+    sections = [intro]
+    if strengths:
+        sections.append(_format_section("Why this pair stands out:", strengths[:5]))
+    if tradeoff:
+        sections.append(_format_section("Main hesitation:", [tradeoff]))
+    return "\n\n".join(section for section in sections if section).strip()
+
+
 def _deterministic_pairwise_response(
     *,
     focal_name: str,
@@ -1116,7 +1138,11 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         flags=re.IGNORECASE,
     )
     global_best_pattern = re.search(
-        r"(?:best overall|overall best|best match across all|across all pandas|global best)",
+        (
+            r"(?:best overall|overall best|best match across all|across all pandas|"
+            r"global best|most eligible panda|most eligible match|best panda match|"
+            r"recommend(?:\s+me)?\s+a\s+panda match|tell me about a panda match)"
+        ),
         lower,
     )
     blockers_pattern = re.match(r"^blockers(?:\s+for)?\s+(.+)$", query_text, flags=re.IGNORECASE)
@@ -1134,6 +1160,21 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
     analytics_response = analytics_chat_response(session=session, message=message, memory=memory)
     if analytics_response is not None:
         return analytics_response
+
+    if global_best_pattern:
+        result = best_overall_match_data(session, k=1)
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="best_overall_empty",
+                response="I could not find any ranked matches in the current scoring view.",
+                data=result,
+            )
+        top = result["matches"][0]
+        return AgentTurn(
+            intent="best_overall",
+            response=_deterministic_best_overall_response(top),
+            data={"best_match": top, "ranking_meta": result},
+        )
 
     if profile_name:
         resolved_name = find_panda_name_by_substring(session, profile_name) or profile_name
@@ -1191,25 +1232,6 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             )
 
         return AgentTurn(intent="panda_info", response=response, data={"profile": profile})
-
-    if global_best_pattern:
-        result = best_overall_match_data(session, k=1)
-        if result["count"] == 0:
-            return AgentTurn(
-                intent="best_overall_empty",
-                response="I could not find any ranked matches in the current scoring view.",
-                data=result,
-            )
-        top = result["matches"][0]
-        response = (
-            "Best overall match across all focal pandas loaded. "
-            "This is the highest-scoring directional pair in the current ranking view."
-        )
-        return AgentTurn(
-            intent="best_overall",
-            response=response,
-            data={"best_match": top, "ranking_meta": result},
-        )
 
     if pairwise_pattern:
         candidate_a_name = pairwise_pattern.group(1).strip(" ?.")
@@ -1493,6 +1515,8 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             response=(
                 "Commands: "
                 "'top 5 matches for Bao Li' (or 'give me the top 5 matches for Bao Li'), "
+                "'best overall panda match', "
+                "'tell me about a panda match', "
                 "'explain <focal_id> <candidate_id>', "
                 "'blockers for <focal_id|name>', "
                 "'how many eligible pandas', 'count alive pandas', "
