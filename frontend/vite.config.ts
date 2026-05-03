@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/agent': 'http://localhost:8000',
       '/matches': 'http://localhost:8000',
+      '/pandas': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },
   },

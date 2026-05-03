@@ -33,6 +33,8 @@ class PandaProfile(Base):
     personality_tags: Mapped[str | None] = mapped_column(Text, nullable=True)
     breeding_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     health_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     babies_had_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lineage: Mapped[int | None] = mapped_column(Integer, nullable=True)
     on_loan: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
