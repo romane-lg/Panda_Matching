@@ -9,11 +9,18 @@ from panda_matching.agent.llm import LLMRateLimitError
 def _top_match_rows() -> list[dict[str, Any]]:
     return [
         {
+            "focal_panda_name": "Ai Bao",
             "candidate_panda_name": "Xi Lan",
             "recommendation_rank_v2": 1,
             "top_positive_factors": "low combined health risk",
             "top_negative_factors": "weak personality overlap",
             "age_gap_years": 5,
+            "focal_country": "South Korea",
+            "focal_city_region": "Yongin",
+            "candidate_country": "USA",
+            "candidate_city_region": "Atlanta",
+            "focal_personality_text": "calm and affectionate",
+            "candidate_personality_text": "playful and energetic",
             "candidate_panda_sex": "male",
             "focal_panda_age": 12,
             "candidate_panda_age": 17,
@@ -26,11 +33,18 @@ def _top_match_rows() -> list[dict[str, Any]]:
             "logistics_component": 0.47,
         },
         {
+            "focal_panda_name": "Ai Bao",
             "candidate_panda_name": "Tai Shan",
             "recommendation_rank_v2": 2,
             "top_positive_factors": "low combined health risk",
             "top_negative_factors": "weak personality overlap",
             "age_gap_years": 8,
+            "focal_country": "South Korea",
+            "focal_city_region": "Yongin",
+            "candidate_country": "USA",
+            "candidate_city_region": "Washington",
+            "focal_personality_text": "calm and affectionate",
+            "candidate_personality_text": "confident and energetic",
             "candidate_panda_sex": "male",
             "focal_panda_age": 12,
             "candidate_panda_age": 20,
@@ -43,11 +57,16 @@ def _top_match_rows() -> list[dict[str, Any]]:
             "logistics_component": 0.47,
         },
         {
+            "focal_panda_name": "Ai Bao",
             "candidate_panda_name": "Po",
             "recommendation_rank_v2": 4,
             "top_positive_factors": "low combined health risk",
             "top_negative_factors": "no major penalties",
             "age_gap_years": 3,
+            "focal_country": "South Korea",
+            "focal_city_region": "Yongin",
+            "candidate_country": "Belgium",
+            "candidate_city_region": "Pairi Daiza",
             "candidate_panda_sex": "male",
             "focal_panda_age": 12,
             "candidate_panda_age": 15,
@@ -63,14 +82,23 @@ def _top_match_rows() -> list[dict[str, Any]]:
 
 
 class _FakeMappingsResult:
-    def __init__(self, row: dict[str, Any] | None) -> None:
+    def __init__(self, row: dict[str, Any] | list[dict[str, Any]] | None) -> None:
         self._row = row
 
     def mappings(self) -> _FakeMappingsResult:
         return self
 
     def first(self) -> dict[str, Any] | None:
+        if isinstance(self._row, list):
+            return self._row[0] if self._row else None
         return self._row
+
+    def all(self) -> list[dict[str, Any]]:
+        if self._row is None:
+            return []
+        if isinstance(self._row, list):
+            return self._row
+        return [self._row]
 
 
 def test_top_matches_prompt_uses_deterministic_readable_summary(monkeypatch) -> None:
@@ -88,7 +116,18 @@ def test_top_matches_prompt_uses_deterministic_readable_summary(monkeypatch) -> 
     turn = router.route_chat_message(object(), "Who are Ai Bao's top 5 matches?", {})
 
     assert turn.intent == "top_matches"
-    assert "Ai Bao's current top 3 matches are Xi Lan, Tai Shan, and Po." in turn.response
+    assert "Ai Bao's current top 3 matches are:" in turn.response
+    assert "1. Xi Lan" in turn.response
+    assert "2. Tai Shan" in turn.response
+    assert "Xi Lan:" in turn.response
+    assert "Tai Shan:" in turn.response
+    assert "Po:" in turn.response
+    assert "Ai Bao and Xi Lan both look relatively healthy" in turn.response
+    assert (
+        "compared with Xi Lan, this one is weaker because Xi Lan has the tighter age gap"
+        in turn.response
+    )
+    assert "strong health penalties" not in turn.response
     assert "I can help with matches" not in turn.response
     assert not turn.response.strip().startswith("{")
 
@@ -111,6 +150,7 @@ def test_second_place_prompt_explains_gap_against_first(monkeypatch) -> None:
     assert "Ranking context:" in turn.response
     assert "Xi Lan has the tighter age gap" in turn.response
     assert "Xi Lan also looks a bit stronger biologically" in turn.response
+    assert "the personality side looks less convincing" in turn.response
 
 
 def test_first_place_prompt_routes_to_match_explanation(monkeypatch) -> None:
@@ -157,6 +197,7 @@ def test_pair_opinion_prompt_includes_why_not_section(monkeypatch) -> None:
     assert "Why it could work:" in turn.response
     assert "Why it may not be the best option:" in turn.response
     assert "Xi Lan also looks a bit stronger biologically" in turn.response
+    assert "the personality fit looks weaker" not in turn.response
 
 
 def test_most_eligible_panda_routes_to_best_overall_before_profile_lookup(monkeypatch) -> None:
@@ -171,9 +212,13 @@ def test_most_eligible_panda_routes_to_best_overall_before_profile_lookup(monkey
                     "focal_panda_name": "Ai Bao",
                     "candidate_panda_name": "Xi Lan",
                     "final_score_v2": 0.91,
-                    "top_positive_factors": "low combined health risk",
+                    "top_positive_factors": "high logistical feasibility; low combined health risk",
                     "top_negative_factors": "weak personality overlap",
                     "age_gap_years": 5,
+                    "focal_city_region": "Yongin",
+                    "focal_country": "South Korea",
+                    "candidate_city_region": "Atlanta",
+                    "candidate_country": "USA",
                     "bio_component": 0.86,
                     "behavior_component": 0.528,
                     "logistics_component": 0.47,
@@ -201,7 +246,11 @@ def test_broad_match_prompt_routes_to_best_overall(monkeypatch) -> None:
                     "focal_panda_name": "Ai Bao",
                     "candidate_panda_name": "Xi Lan",
                     "final_score_v2": 0.91,
-                    "top_positive_factors": "low combined health risk",
+                    "top_positive_factors": "high logistical feasibility; low combined health risk",
+                    "focal_city_region": "Yongin",
+                    "focal_country": "South Korea",
+                    "candidate_city_region": "Atlanta",
+                    "candidate_country": "USA",
                 }
             ],
             "source_view": "core.ranked_directional_recommended_matches_v2",
@@ -212,6 +261,31 @@ def test_broad_match_prompt_routes_to_best_overall(monkeypatch) -> None:
 
     assert turn.intent == "best_overall"
     assert "strongest overall directional match" in turn.response
+    assert "score" not in turn.response
+    assert "Ai Bao and Xi Lan" in turn.response
+    assert (
+        "Ai Bao is in Yongin and Xi Lan is in Atlanta, so geography does not look like "
+        "the main obstacle for a transfer"
+    ) in turn.response
+
+
+def test_top_matches_explanation_prompt_routes_before_profile_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: "Ai Bao")
+    monkeypatch.setattr(
+        router,
+        "top_matches_data",
+        lambda *_args, **_kwargs: {
+            "count": 3,
+            "matches": _top_match_rows(),
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(object(), "Why are Ai Bao's top matches scored highly?", {})
+
+    assert turn.intent == "top_matches"
+    assert "Ai Bao's current top 3 matches are:" in turn.response
+    assert "I could not find a panda matching" not in turn.response
 
 
 def test_vague_best_match_uses_last_panda_memory(monkeypatch) -> None:
@@ -240,7 +314,8 @@ def test_vague_best_match_uses_last_panda_memory(monkeypatch) -> None:
 
     assert turn.intent == "top_matches"
     assert seen == {"panda_name": "Ai Bao", "k": 1}
-    assert "Ai Bao's current top match is Xi Lan." in turn.response
+    assert "Ai Bao's current top match is:" in turn.response
+    assert "1. Xi Lan" in turn.response
 
 
 def test_profile_overview_uses_richer_profile_fields(monkeypatch) -> None:
@@ -434,6 +509,96 @@ def test_compatible_pair_wording_routes_to_pair_opinion(monkeypatch) -> None:
     assert "Bao Li looks like an excellent match for Ai Bao" in turn.response
 
 
+def test_candidate_comparison_uses_bulleted_sections(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "find_panda_name_by_substring",
+        lambda _session, name: {
+            "Ai Bao": "Ai Bao",
+            "Xi Lan": "Xi Lan",
+            "Tai Shan": "Tai Shan",
+        }.get(name),
+    )
+    monkeypatch.setattr(
+        router,
+        "compare_candidates_for_focal_data",
+        lambda *_args, **_kwargs: {
+            "candidate_a_name": "Xi Lan",
+            "candidate_b_name": "Tai Shan",
+            "candidate_a": _top_match_rows()[0],
+            "candidate_b": _top_match_rows()[1],
+            "better_match": _top_match_rows()[0],
+            "missing_candidates": [],
+        },
+    )
+
+    turn = router.route_chat_message(
+        object(), "Is Xi Lan or Tai Shan better for Ai Bao, and why?", {}
+    )
+
+    assert turn.intent == "compare_candidates"
+    assert "Why Xi Lan is ahead:" in turn.response
+    assert "- Xi Lan is currently ranked #1." in turn.response
+    assert "How Tai Shan compares:" in turn.response
+    assert "the personality fit looks weaker" not in turn.response
+
+
+def test_odd_age_gap_prompt_routes_to_match_explanation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "find_panda_name_by_substring",
+        lambda _session, name: {"Ai Bao": "Ai Bao", "Xiao Liwu": "Xiao Liwu"}.get(name),
+    )
+    rows = _top_match_rows() + [
+        {
+            "focal_panda_name": "Ai Bao",
+            "candidate_panda_name": "Xiao Liwu",
+            "recommendation_rank_v2": 3,
+            "top_positive_factors": "low combined health risk",
+            "top_negative_factors": "weak personality overlap",
+            "age_gap_years": 11,
+            "focal_country": "South Korea",
+            "focal_city_region": "Yongin",
+            "candidate_country": "China",
+            "candidate_city_region": "Chengdu",
+            "focal_personality_text": "beloved",
+            "candidate_personality_text": "playful",
+            "candidate_panda_sex": "male",
+            "focal_panda_age": 12,
+            "candidate_panda_age": 23,
+            "candidate_panda_babies": 0,
+            "zero_babies_bonus": 8,
+            "male_older_bonus": 10,
+            "health_penalty_score": 0.03,
+            "bio_component": 0.74,
+            "behavior_component": 0.42,
+            "logistics_component": 0.41,
+        }
+    ]
+    monkeypatch.setattr(
+        router,
+        "top_matches_data",
+        lambda *_args, **_kwargs: {
+            "count": 4,
+            "matches": rows,
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(
+        object(),
+        (
+            "It seems odd to me that Ai Bao and Xiao Liwu make a good match considering "
+            "the age gap. Tell me why."
+        ),
+        {},
+    )
+
+    assert turn.intent == "match_explanation"
+    assert "Xiao Liwu" in turn.response
+    assert "Xi Lan" not in turn.response.splitlines()[0]
+
+
 def test_explanation_context_uses_last_pair(monkeypatch) -> None:
     monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: None)
     monkeypatch.setattr(
@@ -449,6 +614,28 @@ def test_explanation_context_uses_last_pair(monkeypatch) -> None:
     turn = router.route_chat_message(
         object(),
         "Why are they a good match?",
+        {"last_panda_name": "Ai Bao", "last_candidate_name": "Xi Lan"},
+    )
+
+    assert turn.intent == "match_explanation"
+    assert "Xi Lan comes out as Ai Bao's top match" in turn.response
+
+
+def test_weak_personality_overlap_follow_up_uses_last_pair(monkeypatch) -> None:
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: None)
+    monkeypatch.setattr(
+        router,
+        "top_matches_data",
+        lambda *_args, **_kwargs: {
+            "count": 1,
+            "matches": _top_match_rows()[:1],
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(
+        object(),
+        "It seems odd that weak personality overlap still leads to a strong match. Explain that.",
         {"last_panda_name": "Ai Bao", "last_candidate_name": "Xi Lan"},
     )
 
@@ -546,6 +733,94 @@ def test_location_any_count_for_canada(monkeypatch) -> None:
     }
 
 
+def test_count_male_pandas_does_not_leak_relation(monkeypatch) -> None:
+    monkeypatch.setattr(router, "scalar_int", lambda *_args, **_kwargs: 68)
+
+    turn = router.route_chat_message(object(), "How many male pandas are there in my data?", {})
+
+    assert turn.intent == "analytics_count_sex"
+    assert turn.response == "There are 68 male pandas."
+
+
+def test_eligible_count_explanation_follow_up(monkeypatch) -> None:
+    turn = router.route_chat_message(
+        object(),
+        "how are you calculating that",
+        {
+            "last_query_kind": "analytics_count_eligible",
+            "last_eligible_relation": "breedeable_pandas",
+        },
+    )
+
+    assert turn.intent == "analytics_count_eligible_explained"
+    assert "eligible breeding list" in turn.response
+    assert "core.breedeable_pandas" in turn.response
+
+
+def test_health_notes_inventory_query(monkeypatch) -> None:
+    monkeypatch.setattr(router, "relation_exists", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(router, "relation_columns", lambda *_args, **_kwargs: {"health_notes"})
+    monkeypatch.setattr(router, "scalar_int", lambda *_args, **_kwargs: 3)
+    session = type(
+        "FakeSession",
+        (),
+        {
+            "execute": lambda self, _query: _FakeMappingsResult(
+                [{"name": "Ai Bao"}, {"name": "Ai Jiu"}, {"name": "Er Shun"}]
+            )
+        },
+    )()
+
+    turn = router.route_chat_message(session, "which pandas do you have health notes for", {})
+
+    assert turn.intent == "analytics_health_notes_available"
+    assert "I currently have health notes for 3 pandas." in turn.response
+    assert "Ai Bao" in turn.response
+    assert "Ai Jiu" in turn.response
+
+
+def test_no_matches_example_query(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "pick_relation",
+        lambda *_args, **_kwargs: "ranked_directional_recommended_matches_v2",
+    )
+    session = type(
+        "FakeSession",
+        (),
+        {
+            "execute": lambda self, _query: _FakeMappingsResult(
+                {"name": "An An", "status": "deceased"}
+            )
+        },
+    )()
+
+    turn = router.route_chat_message(session, "Who is the panda with no matches", {})
+
+    assert turn.intent == "analytics_no_matches_example"
+    assert "One panda with no ranked matches right now is An An." in turn.response
+    assert "listed as deceased" in turn.response
+
+
+def test_no_match_diagnosis_uses_plain_language(monkeypatch) -> None:
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_args, **_kwargs: "Ai Bao")
+    monkeypatch.setattr(
+        router,
+        "top_matches_data",
+        lambda *_args, **_kwargs: {
+            "count": 1,
+            "matches": _top_match_rows()[:1],
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(object(), "Why does Ai Bao have no matches?", {})
+
+    assert turn.intent == "no_match_diagnosis"
+    assert "different view of the data" in turn.response
+    assert "different table" not in turn.response
+
+
 def test_profile_cubs_question_returns_cub_count(monkeypatch) -> None:
     monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: "Er Shun")
     monkeypatch.setattr(
@@ -556,42 +831,142 @@ def test_profile_cubs_question_returns_cub_count(monkeypatch) -> None:
             "babies_had_count": 2,
         },
     )
+    monkeypatch.setattr(
+        router,
+        "_offspring_summary",
+        lambda *_args, **_kwargs: (
+            "Recorded cubs include Jia Panpan (alive) and Jia Yueyue (alive)."
+        ),
+    )
 
     turn = router.route_chat_message(object(), "Does Er Shun have any cubs?", {})
 
     assert turn.intent == "panda_info"
-    assert turn.response == "Yes, Er Shun has 2 cubs recorded."
+    assert (
+        turn.response
+        == "Yes, Er Shun has 2 cubs recorded. Recorded cubs include Jia Panpan (alive) "
+        "and Jia Yueyue (alive)."
+    )
 
 
-def test_youngest_panda_query_uses_analytics_path() -> None:
+def test_health_question_without_notes_mentions_status(monkeypatch) -> None:
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: "Ai Bao")
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda *_args, **_kwargs: {"name": "Ai Bao", "status": "alive", "health_text": ""},
+    )
+
+    turn = router.route_chat_message(object(), "Is Ai Bao in good health conditions?", {})
+
+    assert turn.intent == "panda_info"
+    assert "do not have detailed health notes for Ai Bao" in turn.response
+    assert "lists Ai Bao as alive" in turn.response
+
+
+def test_follow_up_what_about_reuses_health_question(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "find_panda_name_by_substring",
+        lambda _session, name: {"Ai Bao": "Ai Bao", "Ai Jiu": "Ai Jiu"}.get(name),
+    )
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda _session, panda_name: {"name": panda_name, "status": "alive", "health_text": ""},
+    )
+
+    first = router.route_chat_message(object(), "Is Ai Bao in good health conditions?", {})
+    second = router.route_chat_message(
+        object(),
+        "what about Ai Jiu",
+        {"last_panda_name": "Ai Bao", "last_query_kind": "health"},
+    )
+
+    assert first.intent == "panda_info"
+    assert second.intent == "panda_info"
+    assert "Ai Jiu" in second.response
+    assert "top 5 matches" not in second.response
+
+
+def test_follow_up_and_name_reuses_fun_fact(monkeypatch) -> None:
+    monkeypatch.setattr(
+        router,
+        "find_panda_name_by_substring",
+        lambda _session, name: {"Ai Bao": "Ai Bao", "Ai Jiu": "Ai Jiu"}.get(name),
+    )
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda _session, panda_name: {"name": panda_name, "babies_had_count": 3},
+    )
+
+    turn = router.route_chat_message(
+        object(),
+        "and Ai Jiu",
+        {"last_panda_name": "Ai Bao", "last_query_kind": "fun_fact"},
+    )
+
+    assert turn.intent == "panda_info"
+    assert "Fun fact:" in turn.response
+    assert "Ai Jiu" in turn.response
+
+
+def test_youngest_panda_query_uses_analytics_path(monkeypatch) -> None:
     session = type(
         "FakeSession",
         (),
         {"execute": lambda self, _query: _FakeMappingsResult({"name": "Yuan Zai", "age_years": 2})},
     )()
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda *_args, **_kwargs: {
+            "name": "Yuan Zai",
+            "zoo_or_facility": "Taipei Zoo",
+            "city_region": "Taipei",
+            "country": "Taiwan",
+            "babies_had_count": 0,
+        },
+    )
 
     turn = router.route_chat_message(session, "Who is the youngest panda in the dataset?", {})
 
     assert turn.intent == "analytics_youngest_panda"
     assert "Yuan Zai" in turn.response
     assert "2 years old" in turn.response
+    assert "Taipei Zoo" in turn.response
+    assert "core.panda_profiles" not in turn.response
 
 
-def test_oldest_panda_query_uses_analytics_path() -> None:
+def test_oldest_panda_query_uses_analytics_path(monkeypatch) -> None:
     session = type(
         "FakeSession",
         (),
         {"execute": lambda self, _query: _FakeMappingsResult({"name": "Jia Jia", "age_years": 38})},
     )()
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda *_args, **_kwargs: {
+            "name": "Jia Jia",
+            "zoo_or_facility": "Ocean Park",
+            "city_region": "Hong Kong",
+            "country": "China",
+            "babies_had_count": 6,
+        },
+    )
 
     turn = router.route_chat_message(session, "who is the oldest panda", {})
 
     assert turn.intent == "analytics_oldest_panda"
     assert "Jia Jia" in turn.response
     assert "38 years old" in turn.response
+    assert "Ocean Park" in turn.response
+    assert "core.panda_profiles" not in turn.response
 
 
-def test_most_cubs_query_uses_analytics_path() -> None:
+def test_most_cubs_query_uses_analytics_path(monkeypatch) -> None:
     session = type(
         "FakeSession",
         (),
@@ -601,11 +976,23 @@ def test_most_cubs_query_uses_analytics_path() -> None:
             )
         },
     )()
+    monkeypatch.setattr(
+        router,
+        "panda_profile_data",
+        lambda *_args, **_kwargs: {
+            "name": "Er Shun",
+            "zoo_or_facility": "Toronto Zoo",
+            "city_region": "Toronto",
+            "country": "Canada",
+            "babies_had_count": 7,
+        },
+    )
 
     turn = router.route_chat_message(session, "Who is the panda with the most cubs?", {})
 
     assert turn.intent == "analytics_most_cubs"
-    assert turn.response == "The panda with the most recorded cubs is Er Shun, with 7 cubs."
+    assert "The panda with the most recorded cubs is Er Shun, with 7 cubs." in turn.response
+    assert "Toronto Zoo" in turn.response
 
 
 def test_top_matches_strips_trailing_why(monkeypatch) -> None:
@@ -630,7 +1017,28 @@ def test_top_matches_strips_trailing_why(monkeypatch) -> None:
 
     assert turn.intent == "top_matches"
     assert seen == {"panda_name": "Ai Bao", "k": 5}
-    assert "Ai Bao's current top 3 matches" in turn.response
+    assert "Ai Bao's current top 3 matches are:" in turn.response
+
+
+def test_who_is_best_two_matches_routes_to_top_matches(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(router, "find_panda_name_by_substring", lambda *_: "Ai Bao")
+    monkeypatch.setattr(
+        router,
+        "top_matches_data",
+        lambda _session, panda_name, k: seen.update({"panda_name": panda_name, "k": k})
+        or {
+            "count": 3,
+            "matches": _top_match_rows(),
+            "source_view": "core.ranked_directional_recommended_matches_v2",
+        },
+    )
+
+    turn = router.route_chat_message(object(), "Who is the best 2 matches for Ai Bao", {})
+
+    assert turn.intent == "top_matches"
+    assert seen == {"panda_name": "Ai Bao", "k": 2}
+    assert "Ai Bao's current top 2 matches are:" in turn.response
 
 
 def test_what_about_follow_up_reuses_top_match_context(monkeypatch) -> None:
@@ -673,7 +1081,7 @@ def test_what_about_follow_up_reuses_top_match_context(monkeypatch) -> None:
 
     assert first_turn.intent == "top_matches_no_results"
     assert second_turn.intent == "top_matches"
-    assert "Ai Li's current top 3 matches" in second_turn.response
+    assert "Ai Li's current top 3 matches are:" in second_turn.response
     assert seen == [("An An", 5), ("Ai Li", 5)]
 
 

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import ChatBot, { type Flow, type Settings, type Styles } from 'react-chatbotify'
 import bamboo from './assets/bamboo.jpg'
 import blackFluff from './assets/black-fluff.png'
 import botAvatar from './assets/panda-bot-avatar.png'
-import pandaConnectMark from './assets/panda-connect.png'
+import pandaCatalogMark from './assets/panda-catalog.png'
+import pandaConnectMark from './assets/panda-connect-logo.png'
 import userAvatar from './assets/panda-user-avatar.png'
 import whiteFluff from './assets/white-fluff.png'
 import './App.css'
@@ -13,6 +14,24 @@ type ChatResponse = {
   intent: string
   response: string
   data: Record<string, unknown> | null
+}
+
+type MatchRow = {
+  focal_panda_name?: string
+  candidate_panda_name?: string
+  recommendation_rank_v2?: number
+  recommendation_rank?: number
+  age_gap_years?: number
+  top_positive_factors?: string
+  focal_photo_url?: string | null
+  candidate_photo_url?: string | null
+  candidate_city_region?: string | null
+  candidate_country?: string | null
+  focal_city_region?: string | null
+  focal_country?: string | null
+  bio_component?: number
+  behavior_component?: number
+  candidate_panda_babies?: number
 }
 
 type PandaCatalogItem = {
@@ -59,6 +78,237 @@ function matchesAgeRange(age: number | null, range: string) {
   if (range === '20-plus') return age >= 20
   const [min, max] = range.split('-').map(Number)
   return age >= min && age <= max
+}
+
+function splitFactors(value: string | undefined) {
+  return (value ?? '')
+    .split(';')
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function matchRank(row: MatchRow, fallbackRank: number) {
+  return row.recommendation_rank_v2 ?? row.recommendation_rank ?? fallbackRank
+}
+
+function shortTransferLine(row: MatchRow) {
+  const focal = row.focal_city_region ?? row.focal_country
+  const candidate = row.candidate_city_region ?? row.candidate_country
+  if (!focal || !candidate) return null
+  if (focal === candidate) {
+    return `Both are in ${focal}, so transfer looks straightforward`
+  }
+  return `${focal} and ${candidate} are manageable for a transfer`
+}
+
+function compatibilityBullets(row: MatchRow) {
+  const bullets: string[] = []
+  const factors = splitFactors(row.top_positive_factors)
+
+  if (factors.includes('low combined health risk')) {
+    bullets.push('Both pandas appear healthy')
+  }
+  if (factors.includes('high logistical feasibility')) {
+    const transfer = shortTransferLine(row)
+    if (transfer) bullets.push(transfer)
+  }
+  if (typeof row.age_gap_years === 'number') {
+    bullets.push(`Age gap is workable (${Math.round(row.age_gap_years)} years)`)
+  }
+  if (typeof row.bio_component === 'number') {
+    if (row.bio_component >= 0.8) {
+      bullets.push('Strong biological compatibility')
+    } else if (row.bio_component >= 0.68) {
+      bullets.push('Solid biological compatibility')
+    }
+  }
+  if (typeof row.behavior_component === 'number' && row.behavior_component >= 0.62) {
+    bullets.push('Behavior styles look compatible')
+  }
+  if (row.candidate_panda_babies === 0) {
+    bullets.push('No recorded cubs yet, which helps breeding potential')
+  }
+
+  return Array.from(new Set(bullets)).slice(0, 3)
+}
+
+function parseCardReasoning(response: string) {
+  const map = new Map<string, string[]>()
+  const blocks = response.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (lines.length < 2) continue
+    const heading = lines[0]
+    const bullets = lines
+      .filter((line) => line.startsWith('- '))
+      .map((line) => line.replace(/^- /, '').trim())
+      .filter(Boolean)
+
+    if (bullets.length === 0) continue
+    if (heading.endsWith(':')) {
+      map.set(heading.slice(0, -1).trim(), bullets)
+    }
+  }
+
+  return map
+}
+
+function parseBestOverallReasoning(response: string) {
+  const blocks = response.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
+  for (const block of blocks) {
+    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (lines[0] === 'Why this pair stands out:') {
+      return lines
+        .filter((line) => line.startsWith('- '))
+        .map((line) => line.replace(/^- /, '').trim())
+        .filter(Boolean)
+    }
+  }
+  return []
+}
+
+function MatchCardsMessage({
+  heading,
+  matches,
+  reasoningByName,
+  accentTop = true,
+  showPairImages = false,
+}: {
+  heading: string
+  matches: MatchRow[]
+  reasoningByName?: Map<string, string[]>
+  accentTop?: boolean
+  showPairImages?: boolean
+}) {
+  return (
+    <section className="match-cards-message" aria-label={heading}>
+      <div className="match-cards-heading">{heading}</div>
+      <div className="match-cards-grid">
+        {matches.map((row, index) => {
+          const name = row.candidate_panda_name ?? `Match ${index + 1}`
+          const rank = matchRank(row, index + 1)
+          const bullets = reasoningByName?.get(name) ?? compatibilityBullets(row)
+          const isTop = accentTop && index === 0
+          return (
+            <article
+              className={`match-result-card${isTop ? ' match-result-card--top' : ''}`}
+              key={`${name}-${rank}-${index}`}
+            >
+              <span className="match-rank-badge">#{rank}</span>
+              {showPairImages && row.focal_panda_name ? (
+                <div className="match-pair-images">
+                  <div className="match-image-frame">
+                    {row.focal_photo_url ? (
+                      <img
+                        className="match-image"
+                        src={row.focal_photo_url}
+                        alt={row.focal_panda_name}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="match-image match-image--placeholder" aria-hidden="true">
+                        <span>{row.focal_panda_name.slice(0, 1)}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="match-image-frame">
+                    {row.candidate_photo_url ? (
+                      <img className="match-image" src={row.candidate_photo_url} alt={name} loading="lazy" />
+                    ) : (
+                      <div className="match-image match-image--placeholder" aria-hidden="true">
+                        <span>{name.slice(0, 1)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="match-image-frame">
+                  {row.candidate_photo_url ? (
+                    <img className="match-image" src={row.candidate_photo_url} alt={name} loading="lazy" />
+                  ) : (
+                    <div className="match-image match-image--placeholder" aria-hidden="true">
+                      <span>{name.slice(0, 1)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="match-card-body">
+                <h3>{name}</h3>
+                <ul>
+                  {bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function buildStructuredResponse(payload: ChatResponse): ReactElement | null {
+  const data = payload.data ?? {}
+
+  if (payload.intent === 'top_matches') {
+    const matches = Array.isArray(data.matches) ? (data.matches as MatchRow[]) : []
+    const focalName =
+      (typeof data.panda_name === 'string' && data.panda_name)
+      || matches[0]?.focal_panda_name
+      || 'Top panda matches'
+    if (matches.length > 0) {
+      return (
+        <MatchCardsMessage
+          heading={`${focalName}'s top matches`}
+          matches={matches}
+          reasoningByName={parseCardReasoning(payload.response)}
+        />
+      )
+    }
+  }
+
+  if (payload.intent === 'best_overall') {
+    const bestMatch = data.best_match as MatchRow | undefined
+    if (bestMatch) {
+      const focalName = bestMatch.focal_panda_name ?? 'Best overall match'
+      const reasoning = parseBestOverallReasoning(payload.response)
+      const reasoningByName = new Map<string, string[]>()
+      if (bestMatch.candidate_panda_name && reasoning.length > 0) {
+        reasoningByName.set(bestMatch.candidate_panda_name, reasoning)
+      }
+      return (
+        <MatchCardsMessage
+          heading={`Best overall match for ${focalName}`}
+          matches={[bestMatch]}
+          reasoningByName={reasoningByName}
+          showPairImages
+        />
+      )
+    }
+  }
+
+  if (payload.intent === 'compare_candidates') {
+    const candidateA = data.candidate_a as MatchRow | undefined
+    const candidateB = data.candidate_b as MatchRow | undefined
+    const focalName = typeof data.focal_panda_name === 'string' ? data.focal_panda_name : ''
+    const matches = [candidateA, candidateB].filter(Boolean) as MatchRow[]
+    if (matches.length > 0) {
+      const heading = focalName
+        ? `Best comparison for ${focalName}`
+        : 'Candidate comparison'
+      return (
+        <MatchCardsMessage
+          heading={heading}
+          matches={matches}
+          reasoningByName={parseCardReasoning(payload.response)}
+        />
+      )
+    }
+  }
+
+  return null
 }
 
 function PandaCatalog() {
@@ -125,10 +375,12 @@ function PandaCatalog() {
   return (
     <aside className="panda-catalog" aria-label="Panda catalog">
       <div className="catalog-heading">
-        <div>
-          <h2>Panda Catalog</h2>
-          <p>{filteredPandas.length} of {pandas.length || 140}</p>
-        </div>
+        <img
+          className="catalog-header-logo"
+          src={pandaCatalogMark}
+          alt="Panda Catalog"
+        />
+        <p className="catalog-count">{filteredPandas.length} of {pandas.length || 140}</p>
       </div>
 
       <div className="catalog-controls">
@@ -205,13 +457,21 @@ function PandaCatalog() {
 
 function App() {
   const sessionId = useRef<string | null>(null)
+  const pendingStructuredResponse = useRef<ReactElement | null>(null)
   const isLearnMorePage = window.location.pathname === '/learn-more'
 
   const flow = useMemo<Flow>(
     () => ({
       start: {
         message:
-          'Chat ready. Try "best overall panda match", "top 5 matches for Ai Bao", or "tell me about a panda match".',
+          'Hello I am your panda matching assistant!\n\n'
+          + 'Here are some questions I can help you with:\n'
+          + '- best overall panda match\n'
+          + '- top 5 matches for Ai Bao\n'
+          + '- who is the best match for Bao Li\n'
+          + '- why is Xi Lan Ai Bao\'s first top match\n'
+          + '- does Er Shun have any cubs\n'
+          + '- who is the oldest panda in the dataset',
         path: 'chat',
       },
       chat: {
@@ -242,10 +502,19 @@ function App() {
 
             const chatPayload = payload as ChatResponse
             sessionId.current = chatPayload.session_id
+            pendingStructuredResponse.current = buildStructuredResponse(chatPayload)
+            if (pendingStructuredResponse.current) {
+              return
+            }
             return chatPayload.response
           } catch {
             return 'I could not reach the matching API. Make sure FastAPI is running on port 8000.'
           }
+        },
+        component: () => {
+          const structured = pendingStructuredResponse.current
+          pendingStructuredResponse.current = null
+          return structured ?? undefined
         },
         path: 'chat',
       },
@@ -267,14 +536,13 @@ function App() {
         title: (
           <span className="chat-brand">
             <span className="chat-title">
-              <span>PandaConnect</span>
               <img
                 className="panda-connect-mark"
                 src={pandaConnectMark}
-                alt="Two panda faces with a heart"
+                alt="Panda Connect"
               />
             </span>
-            <span className="chat-subtitle">Panda matching assistant</span>
+            <span className="chat-subtitle">Panda Matching Assistant</span>
           </span>
         ),
         showAvatar: false,

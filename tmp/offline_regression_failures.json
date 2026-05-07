@@ -1,7 +1,7 @@
 [
   {
-    "message": "How many males to females are in the dataset?",
-    "scorer": "expected_counts_match",
-    "response": "I can help with matches. Try: 'best overall panda match', 'top 5 matches for Bao Li', 'explain <focal_id> <candidate_id>', 'blockers for <focal_id|name>', 'how many eligible pandas', 'who is <name>', 'health of <name>'."
+    "message": "Why is Xi Lan Ai Bao's first top match?",
+    "scorer": "expected_names_present",
+    "response": "Which panda should I use for that match question? You can ask for a specific panda or say 'best overall pair'."
   }
 ]

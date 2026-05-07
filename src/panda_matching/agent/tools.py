@@ -80,23 +80,36 @@ def top_matches_data(session: Session, panda_name: str, k: int) -> dict[str, Any
             detail=f"{ranked_view} is missing a recommendation rank column",
         )
 
-    profile_columns = relation_columns(session, schema="core", relation="panda_profiles")
+    profile_relation = (
+        "panda_profiles_agent"
+        if relation_exists(session, "core", "panda_profiles_agent")
+        else "panda_profiles"
+    )
+    profile_columns = relation_columns(session, schema="core", relation=profile_relation)
     has_profile_photos = {"photo_url", "photo_source_url"}.issubset(profile_columns)
+    personality_col = (
+        "personality_tags_agent"
+        if "personality_tags_agent" in profile_columns
+        else "personality_tags"
+    )
+    health_col = (
+        "health_notes_agent" if "health_notes_agent" in profile_columns else "health_notes"
+    )
     extra_select = ""
     joins = ""
     if has_profile_photos:
         if {"focal_panda_id", "candidate_panda_id"}.issubset(columns):
             joins = """
-                LEFT JOIN core.panda_profiles focal_profile
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
                   ON focal_profile.source_id = r.focal_panda_id
-                LEFT JOIN core.panda_profiles candidate_profile
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
                   ON candidate_profile.source_id = r.candidate_panda_id
             """
         elif {"focal_panda_name", "candidate_panda_name"}.issubset(columns):
             joins = """
-                LEFT JOIN core.panda_profiles focal_profile
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
                   ON lower(trim(focal_profile.name)) = lower(trim(r.focal_panda_name))
-                LEFT JOIN core.panda_profiles candidate_profile
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
                   ON lower(trim(candidate_profile.name)) = lower(trim(r.candidate_panda_name))
             """
         if joins:
@@ -105,7 +118,17 @@ def top_matches_data(session: Session, panda_name: str, k: int) -> dict[str, Any
                 focal_profile.photo_url AS focal_photo_url,
                 focal_profile.photo_source_url AS focal_photo_source_url,
                 candidate_profile.photo_url AS candidate_photo_url,
-                candidate_profile.photo_source_url AS candidate_photo_source_url
+                candidate_profile.photo_source_url AS candidate_photo_source_url,
+                focal_profile.zoo_or_facility AS focal_zoo_or_facility,
+                focal_profile.city_region AS focal_city_region,
+                focal_profile.country AS focal_country,
+                candidate_profile.zoo_or_facility AS candidate_zoo_or_facility,
+                candidate_profile.city_region AS candidate_city_region,
+                candidate_profile.country AS candidate_country,
+                focal_profile.""" + personality_col + """ AS focal_personality_text,
+                candidate_profile.""" + personality_col + """ AS candidate_personality_text,
+                focal_profile.""" + health_col + """ AS focal_health_text,
+                candidate_profile.""" + health_col + """ AS candidate_health_text
             """
 
     sql = f"""
@@ -278,23 +301,36 @@ def best_overall_match_data(session: Session, k: int = 1) -> dict[str, Any]:
             detail=f"{ranked_view} has no supported score column for global ranking",
         )
 
-    profile_columns = relation_columns(session, schema="core", relation="panda_profiles")
+    profile_relation = (
+        "panda_profiles_agent"
+        if relation_exists(session, "core", "panda_profiles_agent")
+        else "panda_profiles"
+    )
+    profile_columns = relation_columns(session, schema="core", relation=profile_relation)
     has_profile_photos = {"photo_url", "photo_source_url"}.issubset(profile_columns)
+    personality_col = (
+        "personality_tags_agent"
+        if "personality_tags_agent" in profile_columns
+        else "personality_tags"
+    )
+    health_col = (
+        "health_notes_agent" if "health_notes_agent" in profile_columns else "health_notes"
+    )
     extra_select = ""
     joins = ""
     if has_profile_photos:
         if {"focal_panda_id", "candidate_panda_id"}.issubset(cols):
             joins = """
-                LEFT JOIN core.panda_profiles focal_profile
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
                   ON focal_profile.source_id = r.focal_panda_id
-                LEFT JOIN core.panda_profiles candidate_profile
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
                   ON candidate_profile.source_id = r.candidate_panda_id
             """
         elif {"focal_panda_name", "candidate_panda_name"}.issubset(cols):
             joins = """
-                LEFT JOIN core.panda_profiles focal_profile
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
                   ON lower(trim(focal_profile.name)) = lower(trim(r.focal_panda_name))
-                LEFT JOIN core.panda_profiles candidate_profile
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
                   ON lower(trim(candidate_profile.name)) = lower(trim(r.candidate_panda_name))
             """
         if joins:
@@ -303,7 +339,17 @@ def best_overall_match_data(session: Session, k: int = 1) -> dict[str, Any]:
                 focal_profile.photo_url AS focal_photo_url,
                 focal_profile.photo_source_url AS focal_photo_source_url,
                 candidate_profile.photo_url AS candidate_photo_url,
-                candidate_profile.photo_source_url AS candidate_photo_source_url
+                candidate_profile.photo_source_url AS candidate_photo_source_url,
+                focal_profile.zoo_or_facility AS focal_zoo_or_facility,
+                focal_profile.city_region AS focal_city_region,
+                focal_profile.country AS focal_country,
+                candidate_profile.zoo_or_facility AS candidate_zoo_or_facility,
+                candidate_profile.city_region AS candidate_city_region,
+                candidate_profile.country AS candidate_country,
+                focal_profile.""" + personality_col + """ AS focal_personality_text,
+                candidate_profile.""" + personality_col + """ AS candidate_personality_text,
+                focal_profile.""" + health_col + """ AS focal_health_text,
+                candidate_profile.""" + health_col + """ AS candidate_health_text
             """
 
     sql = f"""
