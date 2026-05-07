@@ -64,7 +64,7 @@ const ageRanges = [
 ]
 
 function getLocationText(panda: PandaCatalogItem) {
-  return [panda.zoo_or_facility, panda.city_region, panda.country].filter(Boolean).join(', ')
+  return [panda.city_region, panda.country].filter(Boolean).join(', ')
 }
 
 function formatSex(sex: string | null) {
@@ -612,8 +612,8 @@ function App() {
           'linear-gradient(90deg, rgba(255, 255, 255, 0.95) 0%, rgba(246, 239, 222, 0.94) 58%, rgba(202, 185, 154, 0.9) 100%)',
         borderBottom: '1px solid rgba(95, 78, 54, 0.28)',
         boxSizing: 'border-box',
-        height: 92,
-        minHeight: 92,
+        height: 132,
+        minHeight: 132,
         alignItems: 'center',
       },
       bodyStyle: {

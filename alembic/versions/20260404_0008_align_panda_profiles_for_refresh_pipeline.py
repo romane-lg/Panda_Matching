@@ -18,36 +18,56 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "panda_profiles",
-        sa.Column("age_years", sa.Integer(), nullable=True),
-        schema="core",
-    )
-    op.add_column(
-        "panda_profiles",
-        sa.Column("birth_year", sa.Integer(), nullable=True),
-        schema="core",
-    )
-    op.add_column(
-        "panda_profiles",
-        sa.Column("current_location", sa.Text(), nullable=True),
-        schema="core",
-    )
-    op.add_column(
-        "panda_profiles",
-        sa.Column("raw_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        schema="core",
-    )
-    op.add_column(
-        "panda_profiles",
-        sa.Column(
-            "ingested_at",
-            sa.DateTime(timezone=True),
-            nullable=True,
-            server_default=sa.func.now(),
-        ),
-        schema="core",
-    )
+    bind = op.get_bind()
+    existing_columns = {
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'core'
+                  AND table_name = 'panda_profiles'
+                """
+            )
+        )
+    }
+
+    if "age_years" not in existing_columns:
+        op.add_column(
+            "panda_profiles",
+            sa.Column("age_years", sa.Integer(), nullable=True),
+            schema="core",
+        )
+    if "birth_year" not in existing_columns:
+        op.add_column(
+            "panda_profiles",
+            sa.Column("birth_year", sa.Integer(), nullable=True),
+            schema="core",
+        )
+    if "current_location" not in existing_columns:
+        op.add_column(
+            "panda_profiles",
+            sa.Column("current_location", sa.Text(), nullable=True),
+            schema="core",
+        )
+    if "raw_payload" not in existing_columns:
+        op.add_column(
+            "panda_profiles",
+            sa.Column("raw_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            schema="core",
+        )
+    if "ingested_at" not in existing_columns:
+        op.add_column(
+            "panda_profiles",
+            sa.Column(
+                "ingested_at",
+                sa.DateTime(timezone=True),
+                nullable=True,
+                server_default=sa.func.now(),
+            ),
+            schema="core",
+        )
 
     op.execute(
         """
