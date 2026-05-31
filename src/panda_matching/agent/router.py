@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from panda_matching.agent.llm import (
@@ -26,6 +27,7 @@ from panda_matching.agent.tools import (
     looks_like_id,
     panda_profile_data,
     pick_relation,
+    relation_columns,
     relation_exists,
     scalar_int,
     top_matches_data,
@@ -40,6 +42,192 @@ class AgentTurn:
     intent: str
     response: str
     data: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class IntentDecision:
+    category: str
+    confidence: float
+    names: tuple[str, ...] = ()
+    needs_clarification: bool = False
+    reason: str = ""
+
+
+def _name_like(text: str) -> str:
+    return text.strip(" ?.!")
+
+
+def _clean_panda_name_hint(text: str) -> str:
+    cleaned = text.strip(" ?.")
+    cleaned = re.sub(
+        r"\s+(?:and\s+)?(?:why|explain|with\s+explanation|with\s+details)$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" ?.")
+
+
+def _normalize_location_hint(location: str) -> tuple[str, str, str]:
+    cleaned = location.strip(" ?.")
+    lowered = cleaned.lower()
+    aliases = {
+        "america": ("USA", "USA"),
+        "usa": ("USA", "USA"),
+        "us": ("USA", "USA"),
+        "u.s.": ("USA", "USA"),
+        "u.s.a.": ("USA", "USA"),
+        "united states": ("USA", "USA"),
+        "the united states": ("USA", "USA"),
+        "south korea": "South Korea",
+        "korea": "South Korea",
+        "uk": "United Kingdom",
+        "u.k.": "United Kingdom",
+    }
+    alias = aliases.get(lowered, cleaned)
+    if isinstance(alias, tuple):
+        query_value, display_value = alias
+    else:
+        query_value = " ".join(part.capitalize() for part in str(alias).split())
+        display_value = " ".join(part.capitalize() for part in str(alias).split())
+    return query_value, display_value, cleaned
+
+
+def classify_chat_intent(message: str, memory: dict[str, str]) -> IntentDecision:
+    query_text = re.split(r"[.?!]\s+", message.strip(), maxsplit=1)[0].strip()
+    lower = query_text.lower()
+
+    if re.match(r"^(?:what|how)\s+about\s+.+$", query_text, flags=re.IGNORECASE):
+        last_query_kind = memory.get("last_query_kind", "")
+        if last_query_kind == "top_matches":
+            return IntentDecision(
+                category="ranking",
+                confidence=0.8,
+                reason="follow-up ranking request",
+            )
+
+    if re.match(
+        r"^why\s+is\s+.+?'s\s+first\s+top\s+match\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    ) or re.match(
+        r"^why\s+is\s+.+?\s+only\s+second\s+for\s+.+?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    ) or re.match(
+        r"^why\s+(?:are|do)\s+.+?'s\s+top\s+matches\s+"
+        r"(?:score(?:d)?\s+highly|rank\s+so\s+high|do\s+so\s+well)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    ) or re.search(
+        r"it\s+seems\s+odd\s+to\s+me\s+that\s+.+?\s+and\s+.+?\s+make\s+a\s+"
+        r"(?:good|great|strong)\s+match",
+        query_text,
+        flags=re.IGNORECASE,
+    ):
+        return IntentDecision(
+            category="explanation",
+            confidence=0.9,
+            reason="rank explanation language",
+        )
+
+    pair_match = re.match(
+        r"^(?:would|could|should|is|are)\s+(.+?)\s+and\s+(.+?)\s+"
+        r"(?:make\s+)?(?:a\s+)?(?:good|great|strong|compatible|suitable)?\s*"
+        r"(?:match|pair|pairing|breeding\s+pair|compatible)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    if pair_match:
+        return IntentDecision(
+            category="match",
+            confidence=0.9,
+            names=(_name_like(pair_match.group(1)), _name_like(pair_match.group(2))),
+            reason="two panda names compared for compatibility",
+        )
+
+    pairwise_match = re.match(
+        r"^is\s+(.+?)\s+or\s+(.+?)\s+better\s+for\s+(.+?)(?:,?\s*and why)?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    if pairwise_match:
+        return IntentDecision(
+            category="match",
+            confidence=0.9,
+            names=(
+                _name_like(pairwise_match.group(1)),
+                _name_like(pairwise_match.group(2)),
+                _name_like(pairwise_match.group(3)),
+            ),
+            reason="candidate comparison for one focal panda",
+        )
+
+    explicit_top = re.search(
+        r"(?:top|best)\s*(\d+)?\s*matches(?:\s+for)?\s+(.+)$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    possessive_top = re.match(
+        r"^(?:who\s+are\s+)?(.+?)'s\s+(?:top|best)\s*(\d+)?\s+matches\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    name_first_top = re.match(
+        r"^(?:(?:who\s+are|whoa\s+re|who\s+rae|show\s+me|give\s+me)\s+)?"
+        r"(.+?)\s+(?:top|best)\s*(\d+)?\s+matches\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    global_best = re.search(
+        (
+            r"(?:best overall|overall best|best match across all|across all pandas|"
+            r"global best|most eligible panda|most eligible match|best panda match|"
+            r"best overall pair|recommend(?:\s+me)?\s+a\s+panda match|"
+            r"tell me about a panda match)"
+        ),
+        lower,
+    )
+    best_for = re.match(
+        r"^(?:who\s+is\s+|what\s+is\s+|show\s+me\s+|find\s+)?(?:the\s+)?"
+        r"(?:best|top|ideal|strongest|most\s+compatible)\s+"
+        r"(?:match|partner|pairing)(?:\s+for)?\s+(.+?)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    if explicit_top or possessive_top or name_first_top or best_for or global_best:
+        return IntentDecision(category="ranking", confidence=0.9, reason="ranking language")
+
+    if _is_vague_best_match_query(query_text):
+        return IntentDecision(
+            category="ranking",
+            confidence=0.65,
+            names=(memory["last_panda_name"],) if "last_panda_name" in memory else (),
+            needs_clarification="last_panda_name" not in memory,
+            reason="vague ranking request",
+        )
+
+    if re.match(r"^(?:explain|why)\b", lower) or "blocker" in lower or "breakdown" in lower:
+        return IntentDecision(
+            category="explanation",
+            confidence=0.8,
+            reason="why/explain language",
+        )
+
+    if re.search(r"\b(health|healthy|condition|alive|dead|deceased|status)\b", lower):
+        return IntentDecision(
+            category="health_status",
+            confidence=0.85,
+            reason="health/status term",
+        )
+
+    if re.search(r"\b(eligible|available|still be matched|can still be matched)\b", lower):
+        return IntentDecision(category="eligibility", confidence=0.85, reason="eligibility term")
+
+    if extract_name_from_question(message):
+        return IntentDecision(category="profile", confidence=0.8, reason="profile info pattern")
+
+    return IntentDecision(category="fallback", confidence=0.2, reason="no matching intent pattern")
 
 
 def _record_llm_fallback(reason: str, phase: str) -> None:
@@ -172,18 +360,142 @@ def _component_takeaway(row: dict[str, Any]) -> str | None:
     return ", ".join(parts[:-1]) + f", and {parts[-1]}"
 
 
-def _natural_strengths(row: dict[str, Any]) -> list[str]:
+def _split_factor_list(value: Any) -> list[str]:
+    text = _clean_factor(value)
+    if not text:
+        return []
+    return [part.strip() for part in text.split(";") if part.strip()]
+
+
+def _row_location(row: dict[str, Any], prefix: str) -> str:
+    bits = [
+        str(row.get(f"{prefix}_zoo_or_facility") or "").strip(),
+        str(row.get(f"{prefix}_city_region") or "").strip(),
+        str(row.get(f"{prefix}_country") or "").strip(),
+    ]
+    return ", ".join(bit for bit in bits if bit)
+
+
+def _row_short_location(row: dict[str, Any], prefix: str) -> str:
+    city = str(row.get(f"{prefix}_city_region") or "").strip()
+    country = str(row.get(f"{prefix}_country") or "").strip()
+    zoo = str(row.get(f"{prefix}_zoo_or_facility") or "").strip()
+    return city or country or zoo
+
+
+def _location_transfer_reason(row: dict[str, Any]) -> str | None:
+    focal_name = str(row.get("focal_panda_name") or "").strip()
+    candidate_name = str(row.get("candidate_panda_name") or "").strip()
+    focal_location = _row_short_location(row, "focal")
+    candidate_location = _row_short_location(row, "candidate")
+    if focal_name and candidate_name and focal_location and candidate_location:
+        if focal_location == candidate_location:
+            return (
+                f"both {focal_name} and {candidate_name} are in {focal_location}, so distance "
+                "is not much of an issue for a transfer"
+            )
+        return (
+            f"{focal_name} is in {focal_location} and {candidate_name} is in "
+            f"{candidate_location}, so geography does not look like the main obstacle "
+            "for a transfer"
+        )
+    return None
+
+
+def _humanize_list_phrase(text: str) -> str:
+    bits = [bit.strip() for bit in re.split(r",|\band\b", text) if bit.strip()]
+    if not bits:
+        return text.strip()
+    if len(bits) == 1:
+        return bits[0]
+    if len(bits) == 2:
+        return f"{bits[0]} and {bits[1]}"
+    return ", ".join(bits[:-1]) + f", and {bits[-1]}"
+
+
+def _personality_buckets(text: str) -> set[str]:
+    lowered = text.lower()
+    buckets: set[str] = set()
+    if any(word in lowered for word in ("calm", "gentle", "affectionate", "loving", "warm")):
+        buckets.add("gentle")
+    if any(
+        word in lowered
+        for word in ("playful", "curious", "energetic", "charming", "crowd-pleaser", "social")
+    ):
+        buckets.add("outgoing")
+    if any(word in lowered for word in ("beloved", "devoted", "attentive", "protective")):
+        buckets.add("bonded")
+    if any(word in lowered for word in ("reserved", "observant", "cautious", "watchful")):
+        buckets.add("reserved")
+    return buckets
+
+
+def _personality_tradeoff_reason(row: dict[str, Any]) -> str | None:
+    focal_name = str(row.get("focal_panda_name") or "").strip()
+    candidate_name = str(row.get("candidate_panda_name") or "").strip()
+    focal_personality = str(row.get("focal_personality_text") or "").strip()
+    candidate_personality = str(row.get("candidate_personality_text") or "").strip()
+    if focal_name and candidate_name and focal_personality and candidate_personality:
+        if _personality_buckets(focal_personality) & _personality_buckets(candidate_personality):
+            return None
+        behavior_component = _maybe_float(row.get("behavior_component"))
+        if behavior_component is not None and behavior_component >= 0.5:
+            return None
+        focal_style = _humanize_list_phrase(focal_personality)
+        candidate_style = _humanize_list_phrase(candidate_personality)
+        return (
+            f"{focal_name} comes across as more {focal_style}, while {candidate_name} comes "
+            f"across as more {candidate_style}, so they do not look especially similar "
+            "in temperament"
+        )
+    return None
+
+
+def _explain_positive_factor(factor: str, row: dict[str, Any] | None = None) -> str:
+    lowered = factor.lower()
+    if lowered == "low combined health risk":
+        if row is not None:
+            focal_name = str(row.get("focal_panda_name") or "").strip()
+            candidate_name = str(row.get("candidate_panda_name") or "").strip()
+            if focal_name and candidate_name:
+                return f"{focal_name} and {candidate_name} both look relatively healthy"
+        return "both pandas look relatively healthy"
+    if lowered == "high logistical feasibility":
+        if row is not None:
+            location_reason = _location_transfer_reason(row)
+            if location_reason:
+                return location_reason
+        return "the pairing looks practical geographically and logistically"
+    if lowered == "no major penalties":
+        return "there is no obvious red flag pulling the match down"
+    return factor
+
+
+def _explain_negative_factor(factor: str) -> str:
+    lowered = factor.lower()
+    if lowered == "weak personality overlap":
+        return "the personality fit looks weaker"
+    return factor
+
+
+def _natural_strengths(row: dict[str, Any], *, detailed: bool = False) -> list[str]:
     strengths: list[str] = []
 
-    positive = _clean_factor(row.get("top_positive_factors"))
-    if positive:
-        strengths.append(f"the clearest strength is {positive}")
+    positive_factors = _split_factor_list(row.get("top_positive_factors"))
+    if positive_factors:
+        for factor in positive_factors:
+            if factor.lower() == "no major penalties" and len(positive_factors) > 1:
+                continue
+            strengths.append(_explain_positive_factor(factor, row))
+    has_health_strength = any(
+        factor.lower() == "low combined health risk" for factor in positive_factors
+    )
 
     age_gap_years = _maybe_float(row.get("age_gap_years"))
     focal_age = _maybe_float(row.get("focal_panda_age"))
     candidate_age = _maybe_float(row.get("candidate_panda_age"))
     if age_gap_years is not None:
-        strengths.append(f"the age gap is a manageable {age_gap_years:.0f} years")
+        strengths.append(f"their {age_gap_years:.0f}-year age gap looks workable")
     if (
         row.get("candidate_panda_sex") == "male"
         and focal_age is not None
@@ -191,43 +503,90 @@ def _natural_strengths(row: dict[str, Any]) -> list[str]:
         and candidate_age > focal_age
         and int(row.get("male_older_bonus") or 0) > 0
     ):
-        strengths.append(
-            "the older-male / younger-female setup is also working in the pair's favor"
-        )
+        strengths.append("the older-male / younger-female setup also helps")
 
     candidate_babies = row.get("candidate_panda_babies")
     zero_babies_bonus = int(row.get("zero_babies_bonus") or 0)
     if candidate_babies == 0 and zero_babies_bonus > 0:
         candidate_name = str(row.get("candidate_panda_name") or "the candidate")
         strengths.append(
-            f"{candidate_name} has no recorded cubs yet, which can make the pairing "
-            "more promising than one involving a male that has already reproduced"
+            f"{candidate_name} has no recorded cubs yet, which helps from a breeding standpoint"
         )
 
     health_penalty = _maybe_float(row.get("health_penalty_score"))
-    if health_penalty is not None and health_penalty <= 0.1:
-        strengths.append("there are very few health concerns weighing the pair down")
+    if not has_health_strength and health_penalty is not None and health_penalty <= 0.1:
+        strengths.append("there are no major health concerns pulling this pair down")
 
-    component_takeaway = _component_takeaway(row)
+    component_takeaway = _component_takeaway(row) if detailed else None
     if component_takeaway:
         strengths.append(
-            component_takeaway.replace("the biological fit looks", "biologically the pair looks")
-            .replace("the behavior fit looks", "behaviorally the pair looks")
-            .replace("logistically the pairing looks", "logistically the pair looks")
+            component_takeaway.replace(
+                "the biological fit looks",
+                "biologically the pair looks",
+            )
+            .replace(
+                "the behavior fit looks",
+                "on the behavior side the pair looks",
+            )
+            .replace(
+                "logistically the pairing looks",
+                "logistically the pair looks",
+            )
+            + ", which lines up with the way the ranking balances breeding fit, behavior, "
+            "and practicality"
         )
 
     return strengths
 
 
 def _natural_tradeoff(row: dict[str, Any]) -> str | None:
-    negative = _clean_factor(row.get("top_negative_factors"))
-    if negative and negative.lower() != "no major penalties":
-        return (
-            f"The softer spot is {negative}, so the pair looks less convincing "
-            "on personality than it does on health and breeding factors."
-        )
+    negatives = _split_factor_list(row.get("top_negative_factors"))
+    if negatives:
+        if negatives[0].lower() == "no major penalties":
+            return None
+        explained = _explain_negative_factor(negatives[0])
+        if explained == "the personality fit looks weaker":
+            return (
+                "the personality side looks less convincing, so the match is being carried more "
+                "by health, age, and breeding fit than by especially obvious behavioral chemistry"
+            )
+        return explained
 
     return None
+
+
+def _comparison_summary(row: dict[str, Any], stronger_row: dict[str, Any]) -> str | None:
+    stronger_name = str(
+        stronger_row.get("candidate_panda_name") or "the higher-ranked match"
+    ).strip()
+    gap_reasons = _relative_gap_reasons(row, stronger_row)
+    if not gap_reasons:
+        return None
+    kept = gap_reasons[:2]
+    if len(kept) == 1:
+        return f"compared with {stronger_name}, this one is weaker because {kept[0]}"
+    return (
+        f"compared with {stronger_name}, this one is weaker because "
+        f"{kept[0]} and {kept[1].replace(f'{stronger_name} ', '', 1).lower()}"
+    )
+
+
+def _candidate_section_items(
+    row: dict[str, Any],
+    *,
+    stronger_row: dict[str, Any] | None = None,
+    detailed: bool = False,
+) -> list[str]:
+    strengths = _natural_strengths(row, detailed=detailed)
+    tradeoff = _natural_tradeoff(row)
+    items: list[str] = strengths[:3]
+    if stronger_row is not None:
+        comparison = _comparison_summary(row, stronger_row)
+        if comparison:
+            items.append(comparison)
+    if tradeoff and tradeoff != "the personality fit looks weaker":
+        items.append(tradeoff)
+    return items
 
 
 def _format_section(title: str, items: list[str]) -> str:
@@ -235,6 +594,322 @@ def _format_section(title: str, items: list[str]) -> str:
     if not cleaned:
         return ""
     return title + "\n" + "\n".join(f"- {item}" for item in cleaned)
+
+
+def _join_natural(items: list[str]) -> str:
+    cleaned = [item for item in items if item]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
+
+
+def _profile_location_text(profile: dict[str, Any]) -> str:
+    return _join_natural(
+        [
+            str(profile.get("zoo_or_facility") or "").strip(),
+            str(profile.get("city_region") or "").strip(),
+            str(profile.get("country") or "").strip(),
+        ]
+    )
+
+
+def _offspring_rows_for_parent(session: Session, panda_name: str) -> list[dict[str, Any]]:
+    result = session.execute(
+        text(
+            """
+            SELECT name, status, city_region, country
+            FROM core.panda_profiles
+            WHERE lower(trim(mother)) = lower(trim(:panda_name))
+               OR lower(trim(father)) = lower(trim(:panda_name))
+            ORDER BY name ASC
+            """
+        ),
+        {"panda_name": panda_name},
+    )
+    return [dict(row) for row in result.mappings().all()]
+
+
+def _offspring_summary(session: Session, panda_name: str, *, limit: int = 3) -> str | None:
+    offspring = _offspring_rows_for_parent(session, panda_name)
+    if not offspring:
+        return None
+
+    pieces: list[str] = []
+    for row in offspring[:limit]:
+        name = str(row.get("name") or "").strip()
+        status = str(row.get("status") or "").strip().lower()
+        location = _join_natural(
+            [
+                str(row.get("city_region") or "").strip(),
+                str(row.get("country") or "").strip(),
+            ]
+        )
+        detail_bits: list[str] = []
+        if location:
+            detail_bits.append(f"in {location}")
+        if status:
+            detail_bits.append(status)
+        if name:
+            if detail_bits:
+                pieces.append(f"{name} ({', '.join(detail_bits)})")
+            else:
+                pieces.append(name)
+
+    if not pieces:
+        return None
+
+    summary = "Recorded cubs include " + _join_natural(pieces) + "."
+    if len(offspring) > limit:
+        summary += f" There are {len(offspring)} recorded in total."
+    return summary
+
+
+def _profile_context_summary(profile: dict[str, Any]) -> str | None:
+    location = _profile_location_text(profile)
+    babies = profile.get("babies_had_count")
+    bits: list[str] = []
+    if location:
+        bits.append(f"{profile.get('name') or 'This panda'} is listed at {location}")
+    if babies not in (None, ""):
+        cub_word = "cub" if int(babies) == 1 else "cubs"
+        bits.append(f"the profile records {babies} {cub_word}")
+    if not bits:
+        return None
+    return ". ".join(bit[0].upper() + bit[1:] if bit else bit for bit in bits) + "."
+
+
+def _profile_overview_response(profile: dict[str, Any]) -> str:
+    name = str(profile.get("name") or "This panda").strip()
+    sex = str(profile.get("sex") or "").strip().lower()
+    status = str(profile.get("status") or "").strip().lower()
+    age = profile.get("age_years")
+    babies = profile.get("babies_had_count")
+    location = _profile_location_text(profile)
+    description = str(profile.get("description_text") or "").strip()
+    personality = str(profile.get("personality_text") or "").strip()
+    health = str(profile.get("health_text") or "").strip()
+
+    identity_bits: list[str] = []
+    if age not in (None, ""):
+        identity_bits.append(f"{age}-year-old")
+    if sex:
+        identity_bits.append(sex)
+    identity = " ".join(identity_bits) if identity_bits else "profiled"
+
+    intro = f"{name} is a {identity} panda"
+    if status:
+        intro += f" listed as {status}"
+    if location:
+        intro += f" at {location}"
+    intro += "."
+
+    details: list[str] = []
+    if babies not in (None, ""):
+        details.append(f"The profile records {babies} cubs")
+    if personality:
+        details.append(f"personality notes include {personality}")
+    if health:
+        details.append(f"health context says {health}")
+
+    sections = [intro]
+    if description:
+        sections.append(description)
+    if details:
+        sections.append(_join_natural(details).rstrip(".") + ".")
+    return "\n\n".join(section for section in sections if section).strip()
+
+
+def _pair_not_ranked_response(
+    *,
+    focal_name: str,
+    candidate_name: str,
+    focal_profile: dict[str, Any] | None,
+    candidate_profile: dict[str, Any] | None,
+) -> str:
+    if not focal_profile or not candidate_profile:
+        missing = focal_name if not focal_profile else candidate_name
+        return (
+            f"I could not find a complete profile for {missing}, so I cannot give a "
+            "grounded pair assessment yet."
+        )
+
+    focal_sex = str(focal_profile.get("sex") or "").strip().lower()
+    candidate_sex = str(candidate_profile.get("sex") or "").strip().lower()
+    focal_status = str(focal_profile.get("status") or "").strip().lower()
+    candidate_status = str(candidate_profile.get("status") or "").strip().lower()
+
+    blockers: list[str] = []
+    if focal_sex and candidate_sex and focal_sex == candidate_sex:
+        blockers.append(f"both pandas are recorded as {focal_sex}")
+    if focal_status and focal_status != "alive":
+        blockers.append(f"{focal_profile.get('name') or focal_name} is recorded as {focal_status}")
+    if candidate_status and candidate_status != "alive":
+        blockers.append(
+            f"{candidate_profile.get('name') or candidate_name} is recorded as {candidate_status}"
+        )
+
+    if blockers:
+        return (
+            f"{candidate_profile.get('name') or candidate_name} is not currently showing up as "
+            f"a ranked breeding match for {focal_profile.get('name') or focal_name}. "
+            "The likely blocker is that "
+            + "; ".join(blockers)
+            + "."
+        )
+
+    return (
+        f"I found profiles for {focal_profile.get('name') or focal_name} and "
+        f"{candidate_profile.get('name') or candidate_name}, but this pair is not present "
+        "in the ranked match output. That means the pair likely dropped out during "
+        "eligibility, candidate-pair generation, or scoring."
+    )
+
+
+def _ranked_pair_turn(
+    *,
+    session: Session,
+    message: str,
+    memory: dict[str, str],
+    focal_name: str,
+    candidate_name: str,
+    explanation: bool = False,
+) -> AgentTurn:
+    resolved_focal = find_panda_name_by_substring(session, focal_name) or focal_name
+    result = top_matches_data(session, panda_name=resolved_focal, k=20)
+    matches = result["matches"]
+    candidate_row = _find_candidate_row(matches, candidate_name)
+    top_row = matches[0] if matches else None
+
+    if not candidate_row:
+        resolved_candidate_as_focal = (
+            find_panda_name_by_substring(session, candidate_name) or candidate_name
+        )
+        reverse_result = top_matches_data(session, panda_name=resolved_candidate_as_focal, k=20)
+        reverse_matches = reverse_result["matches"]
+        reverse_candidate_row = _find_candidate_row(reverse_matches, resolved_focal)
+        if reverse_candidate_row:
+            resolved_focal = resolved_candidate_as_focal
+            candidate_name = focal_name
+            result = reverse_result
+            matches = reverse_matches
+            candidate_row = reverse_candidate_row
+            top_row = matches[0] if matches else None
+
+    if not candidate_row:
+        memory["last_panda_name"] = resolved_focal
+        memory["last_candidate_name"] = candidate_name
+        focal_profile = panda_profile_data(session, panda_name=resolved_focal)
+        candidate_profile = panda_profile_data(session, panda_name=candidate_name)
+        return AgentTurn(
+            intent="pairwise_match_not_found",
+            response=_pair_not_ranked_response(
+                focal_name=resolved_focal,
+                candidate_name=candidate_name,
+                focal_profile=focal_profile,
+                candidate_profile=candidate_profile,
+            ),
+            data={
+                "ranking_result": result,
+                "focal_profile": focal_profile,
+                "candidate_profile": candidate_profile,
+            },
+        )
+
+    memory["last_panda_name"] = resolved_focal
+    memory["last_candidate_name"] = str(candidate_row.get("candidate_panda_name") or candidate_name)
+    if explanation:
+        return AgentTurn(
+            intent="match_explanation",
+            response=_deterministic_rank_explanation(
+                focal_name=resolved_focal,
+                candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
+                candidate_row=candidate_row,
+                top_row=top_row,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data={
+                "panda_name": resolved_focal,
+                "candidate_name": candidate_name,
+                "match": candidate_row,
+                "matches": matches,
+            },
+        )
+
+    return AgentTurn(
+        intent="pairwise_match_opinion",
+        response=_deterministic_pair_opinion_response(
+            focal_name=resolved_focal,
+            candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
+            candidate_row=candidate_row,
+            top_row=top_row,
+        ),
+        data={
+            "panda_name": resolved_focal,
+            "candidate_name": candidate_name,
+            "match": candidate_row,
+            "matches": matches,
+        },
+    )
+
+
+def _is_vague_best_match_query(message: str) -> bool:
+    lower = message.strip().lower()
+    if not re.search(r"\b(match|matches|partner|breed|breeding|pair|pairing)\b", lower):
+        return False
+    return bool(
+        re.search(
+            r"\b(best|top|ideal|good|compatible|recommend|strongest|suitable)\b",
+            lower,
+        )
+    )
+
+
+def _resolve_contextual_panda_name(
+    session: Session,
+    raw_name: str,
+    memory: dict[str, str],
+) -> str:
+    name = raw_name.strip(" ?.")
+    if name.lower() in {"he", "she", "him", "her", "it", "they", "them"}:
+        return memory.get("last_panda_name") or name
+    return find_panda_name_by_substring(session, name) or name
+
+
+def _remember_query_kind(memory: dict[str, str], kind: str) -> None:
+    memory["last_query_kind"] = kind
+
+
+def _remember_profile_query_kind(
+    memory: dict[str, str],
+    *,
+    asks_age: bool,
+    asks_location: bool,
+    asks_health: bool,
+    asks_status: bool,
+    asks_personality: bool,
+    asks_fun_fact: bool,
+    asks_cubs: bool,
+) -> None:
+    if asks_fun_fact:
+        _remember_query_kind(memory, "fun_fact")
+    elif asks_health:
+        _remember_query_kind(memory, "health")
+    elif asks_status:
+        _remember_query_kind(memory, "status")
+    elif asks_personality:
+        _remember_query_kind(memory, "personality")
+    elif asks_location:
+        _remember_query_kind(memory, "location")
+    elif asks_age:
+        _remember_query_kind(memory, "age")
+    elif asks_cubs:
+        _remember_query_kind(memory, "cubs")
+    else:
+        _remember_query_kind(memory, "profile")
 
 
 def _relative_gap_reasons(
@@ -323,46 +998,75 @@ def _deterministic_top_matches_response(
         for row in selected
         if row.get("candidate_panda_name")
     ]
-    lead = selected[0]
-    lead_name = str(lead.get("candidate_panda_name") or "the current leader").strip()
-    strengths = _natural_strengths(lead)
-    tradeoff = _natural_tradeoff(lead)
-
     if len(top_names) == 1:
-        intro = f"{focal_name}'s current top match is {top_names[0]}."
-    elif len(top_names) == 2:
-        intro = f"{focal_name}'s current top matches are {top_names[0]} and {top_names[1]}."
+        intro = f"{focal_name}'s current top match is:"
     else:
-        intro = (
-            f"{focal_name}'s current top {len(top_names)} matches are "
-            + ", ".join(top_names[:-1])
-            + f", and {top_names[-1]}."
-        )
+        intro = f"{focal_name}'s current top {len(top_names)} matches are:"
+    ranked_list = "\n".join(f"{idx}. {name}" for idx, name in enumerate(top_names, start=1))
 
-    intro_lines = [intro]
+    sections = [intro + "\n" + ranked_list]
+    for idx, row in enumerate(selected):
+        name = str(row.get("candidate_panda_name") or f"match #{idx + 1}").strip()
+        stronger_row = selected[idx - 1] if idx > 0 else None
+        items = _candidate_section_items(row, stronger_row=stronger_row, detailed=detailed)
+        section = _format_section(f"{name}:", items)
+        if section:
+            sections.append(section)
+
+    return "\n\n".join(section for section in sections if section).strip()
+
+
+def _deterministic_best_overall_response(row: dict[str, Any], *, detailed: bool = False) -> str:
+    focal_name = str(row.get("focal_panda_name") or row.get("name") or "the focal panda").strip()
+    candidate_name = str(row.get("candidate_panda_name") or "the candidate panda").strip()
+    rank_score = _format_rank_score(row)
+    strengths = _natural_strengths(row, detailed=detailed)
+    tradeoff = _natural_tradeoff(row)
+
+    def _best_overall_reason(text: str) -> str:
+        if text.startswith("both pandas look relatively healthy"):
+            return (
+                f"both {focal_name} and {candidate_name} look relatively healthy in the "
+                "current data"
+            )
+        if text.startswith("the pairing looks practical geographically and logistically"):
+            return (
+                f"{focal_name} and {candidate_name} look practical geographically and "
+                "logistically"
+            )
+        if text.startswith("their age gap is "):
+            return text
+        if text.startswith("the older-male / younger-female setup"):
+            return text
+        if text.startswith("the data does not show strong health penalties"):
+            return (
+                f"the data does not show strong health penalties for either {focal_name} "
+                f"or {candidate_name}"
+            )
+        return text
+
+    intro = (
+        f"The strongest overall directional match I found is {focal_name} with "
+        f"{candidate_name}."
+    )
+    if detailed and rank_score:
+        intro += f" It is currently ranked with {rank_score}."
+
+    sections = [intro]
     if strengths:
-        intro_lines.append(f"{lead_name} leads the list mainly because {strengths[0]}.")
-
-    followup: list[str] = []
-    if len(selected) > 1:
-        runner_up = selected[1]
-        runner_name = str(runner_up.get("candidate_panda_name") or "the next candidate").strip()
-        followup.append(
-            f"{runner_name} is right behind, so the top of the list is fairly tight."
+        sections.append(
+            _format_section(
+                "Why this pair stands out:",
+                [_best_overall_reason(reason) for reason in strengths[:5]],
+            )
         )
-
-    if len(strengths) > 1:
-        followup.extend(strengths[1:])
-
-    sections = ["\n".join(intro_lines)]
-    why_section = _format_section("Why the first match is leading:", followup[:4])
-    if why_section:
-        sections.append(why_section)
     if tradeoff:
-        tradeoff_section = _format_section("Main hesitation:", [tradeoff])
-        if tradeoff_section:
-            sections.append(tradeoff_section)
-
+        sections.append(
+            _format_section(
+                "Main hesitation:",
+                [tradeoff],
+            )
+        )
     return "\n\n".join(section for section in sections if section).strip()
 
 
@@ -379,30 +1083,14 @@ def _deterministic_pairwise_response(
     candidate_b = result["candidate_b"]
     better_name = str(better.get("candidate_panda_name") or "the stronger candidate").strip()
 
-    def _summary(row: dict[str, Any] | None) -> str | None:
-        if row is None:
-            return None
-        name = str(row.get("candidate_panda_name") or "").strip()
-        if not name:
-            return None
-        rank = _rank_number(row)
-        strengths = _natural_strengths(row)
-        tradeoff = _natural_tradeoff(row)
-        sentence = name
-        if rank is not None:
-            sentence += f" sits at #{rank}"
-        if strengths:
-            strength_text = strengths[0].removeprefix("the clearest strength is ")
-            sentence += f", and its clearest strength is {strength_text}"
-        sentence += "."
-        if len(strengths) > 1:
-            sentence += " It also helps that " + "; ".join(strengths[1:]) + "."
-        if tradeoff:
-            sentence += f" {tradeoff}"
-        return sentence
-
     better_rank = _rank_number(better)
-    other = candidate_b if better is candidate_a else candidate_a
+    if (
+        candidate_b is not None
+        and str(candidate_b.get("candidate_panda_name") or "").strip() == better_name
+    ):
+        other = candidate_a
+    else:
+        other = candidate_b if candidate_b is not None else candidate_a
     other_name = (
         str(other.get("candidate_panda_name") or "").strip()
         if other is not None
@@ -418,15 +1106,21 @@ def _deterministic_pairwise_response(
         comparison = f"{better_name} is currently ahead in the ranking."
         comparison += f" The margin over {other_name} is noticeable, but not huge."
 
-    better_summary = _summary(better)
-    other_summary = _summary(other)
     sections = [intro]
     if comparison:
         sections.append(comparison)
-    if better_summary:
-        sections.append(_format_section(f"Why {better_name} is ahead:", [better_summary]))
-    if other_summary:
-        sections.append(_format_section(f"How {other_name} compares:", [other_summary]))
+    better_items = _candidate_section_items(better, detailed=detailed) if better is not None else []
+    if better_rank is not None and better_items:
+        better_items = [f"{better_name} is currently ranked #{better_rank}."] + better_items
+    other_items = (
+        _candidate_section_items(other, stronger_row=better, detailed=detailed)
+        if other is not None
+        else []
+    )
+    if better_items:
+        sections.append(_format_section(f"Why {better_name} is ahead:", better_items))
+    if other_items:
+        sections.append(_format_section(f"How {other_name} compares:", other_items))
     return "\n\n".join(section for section in sections if section)
 
 
@@ -468,7 +1162,7 @@ def _deterministic_pair_opinion_response(
         why_not_items.extend(gap_reasons[:3])
     elif rank is not None and rank > 1:
         why_not_items.append("there are stronger-ranked options ahead of this pairing")
-    if tradeoff:
+    if tradeoff and not gap_reasons:
         why_not_items.append(tradeoff)
     if why_not_items:
         sections.append(_format_section("Why it may not be the best option:", why_not_items))
@@ -524,7 +1218,7 @@ def _deterministic_rank_explanation(
     detailed: bool = False,
 ) -> str:
     rank = _rank_number(candidate_row)
-    strengths = _natural_strengths(candidate_row)
+    strengths = _natural_strengths(candidate_row, detailed=detailed)
     tradeoff = _natural_tradeoff(candidate_row)
     if rank == 1:
         intro = f"{candidate_name} comes out as {focal_name}'s top match right now."
@@ -862,17 +1556,26 @@ def _execute_llm_tool(
 
 def extract_name_from_question(message: str) -> str | None:
     patterns = [
-        r"^(?:who is|tell me(?:\s+more)? about|profile of)\s+(.+?)(?:[.?!].*)?$",
+        r"^(?:who is|tell me(?:\s+more)? about|profile of|details on)\s+(.+?)(?:[.?!].*)?$",
         r"^(?:tell me\s+a\s+fun\s+fact\s+about)\s+(.+)$",
         r"^(?:how old is|where is|health of|personality of)\s+(.+)$",
         r"^(?:what is the health of|what is the personality of)\s+(.+)$",
+        r"^is\s+(.+?)\s+(?:dead\s+or\s+alive|alive\s+or\s+dead)\??$",
         r"^is\s+(.+?)\s+(?:healthy|in good health(?: conditions)?)\??$",
+        r"^is\s+(.+?)\s+(?:alive|dead|deceased)\??$",
+        r"^does\s+(.+?)\s+have\s+any\s+(?:cubs|babies)\??$",
+        r"^how many\s+(?:cubs|babies)\s+does\s+(.+?)\s+have\??$",
+        r"^(?:status of|condition of)\s+(.+)$",
         r"^how is\s+(.+?)'s\s+health\??$",
     ]
     for pattern in patterns:
         matched = re.match(pattern, message.strip(), flags=re.IGNORECASE)
         if matched:
-            return matched.group(1).strip(" ?.")
+            candidate = matched.group(1).strip(" ?.")
+            candidate_lower = candidate.lower()
+            if re.search(r"\b(best|top)\b.*\bmatch(?:es)?\b", candidate_lower):
+                return None
+            return candidate
     return None
 
 
@@ -883,6 +1586,208 @@ def analytics_chat_response(
 ) -> AgentTurn | None:
     lower = message.strip().lower()
 
+    youngest_pat = re.match(
+        r"^who\s+is\s+(?:the\s+)?youngest\s+panda(?:\s+in\s+the\s+dataset)?\??$",
+        lower,
+    )
+    if youngest_pat:
+        row = session.execute(
+            text(
+                """
+                SELECT name, age_years
+                FROM core.panda_profiles
+                WHERE age_years IS NOT NULL
+                ORDER BY age_years ASC, name ASC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+        if not row:
+            return AgentTurn(
+                intent="analytics_youngest_panda",
+                response="I could not find any pandas with recorded ages.",
+                data={"name": None, "age_years": None},
+            )
+        return AgentTurn(
+            intent="analytics_youngest_panda",
+            response=(
+                f"The youngest panda in the dataset is {row['name']}, "
+                f"at approximately {row['age_years']} years old."
+                + (
+                    " " + extra
+                    if (extra := _profile_context_summary(
+                        panda_profile_data(session, panda_name=row["name"]) or {}
+                    ))
+                    else ""
+                )
+            ),
+            data={"name": row["name"], "age_years": row["age_years"]},
+        )
+
+    oldest_pat = re.match(
+        r"^who\s+is\s+(?:the\s+)?oldest\s+panda(?:\s+in\s+the\s+dataset)?\??$",
+        lower,
+    )
+    if oldest_pat:
+        row = session.execute(
+            text(
+                """
+                SELECT name, age_years
+                FROM core.panda_profiles
+                WHERE age_years IS NOT NULL
+                ORDER BY age_years DESC, name ASC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+        if not row:
+            return AgentTurn(
+                intent="analytics_oldest_panda",
+                response="I could not find any pandas with recorded ages.",
+                data={"name": None, "age_years": None},
+            )
+        return AgentTurn(
+            intent="analytics_oldest_panda",
+            response=(
+                f"The oldest panda in the dataset is {row['name']}, "
+                f"at approximately {row['age_years']} years old."
+                + (
+                    " " + extra
+                    if (extra := _profile_context_summary(
+                        panda_profile_data(session, panda_name=row["name"]) or {}
+                    ))
+                    else ""
+                )
+            ),
+            data={"name": row["name"], "age_years": row["age_years"]},
+        )
+
+    most_cubs_pat = re.match(
+        r"^who\s+is\s+(?:the\s+)?panda\s+with\s+the\s+most\s+(?:cubs|babies)\??$",
+        lower,
+    )
+    if most_cubs_pat:
+        row = session.execute(
+            text(
+                """
+                SELECT name, babies_had_count
+                FROM core.panda_profiles
+                WHERE babies_had_count IS NOT NULL
+                ORDER BY babies_had_count DESC, name ASC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+        if not row:
+            return AgentTurn(
+                intent="analytics_most_cubs",
+                response="I could not find any pandas with recorded cub counts.",
+                data={"name": None, "babies_had_count": None},
+            )
+        babies = int(row["babies_had_count"])
+        cub_word = "cub" if babies == 1 else "cubs"
+        return AgentTurn(
+            intent="analytics_most_cubs",
+            response=(
+                f"The panda with the most recorded cubs is {row['name']}, "
+                f"with {babies} {cub_word}."
+                + (
+                    " " + extra
+                    if (extra := _profile_context_summary(
+                        panda_profile_data(session, panda_name=row["name"]) or {}
+                    ))
+                    else ""
+                )
+            ),
+            data={"name": row["name"], "babies_had_count": babies},
+        )
+
+    no_matches_pat = re.match(
+        r"^who\s+is\s+(?:the\s+)?panda\s+with\s+no\s+matches\??$",
+        lower,
+    )
+    if no_matches_pat:
+        ranked_relation = pick_relation(
+            session,
+            "core",
+            ["ranked_directional_recommended_matches_v2", "ranked_directional_recommended_matches"],
+        )
+        row = session.execute(
+            text(
+                f"""
+                SELECT p.name, p.status
+                FROM core.panda_profiles p
+                LEFT JOIN (
+                    SELECT DISTINCT focal_panda_name
+                    FROM core.{ranked_relation}
+                ) r
+                  ON lower(trim(p.name)) = lower(trim(r.focal_panda_name))
+                WHERE r.focal_panda_name IS NULL
+                ORDER BY
+                    CASE WHEN lower(coalesce(p.status, '')) = 'alive' THEN 0 ELSE 1 END,
+                    p.name ASC
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+        if not row:
+            return AgentTurn(
+                intent="analytics_no_matches_example",
+                response="I could not find a panda with no ranked matches right now.",
+                data={"name": None},
+            )
+        name = str(row["name"])
+        status = str(row.get("status") or "").strip().lower()
+        response = f"One panda with no ranked matches right now is {name}."
+        if status and status != "alive":
+            response += f" {name} is listed as {status}, which likely explains it."
+        return AgentTurn(
+            intent="analytics_no_matches_example",
+            response=response,
+            data={"name": name, "status": status},
+        )
+
+    health_notes_pat = re.match(
+        r"^which\s+pandas?\s+do\s+you\s+have\s+health\s+notes\s+for\??$",
+        lower,
+    )
+    if health_notes_pat:
+        relation = (
+            "panda_profiles_agent"
+            if relation_exists(session, "core", "panda_profiles_agent")
+            else "panda_profiles"
+        )
+        cols = relation_columns(session, "core", relation)
+        health_col = "health_notes_agent" if "health_notes_agent" in cols else "health_notes"
+        count = scalar_int(
+            session,
+            f"""
+            SELECT COUNT(*) AS n
+            FROM core.{relation}
+            WHERE trim(coalesce({health_col}, '')) <> ''
+            """,
+        )
+        rows = session.execute(
+            text(
+                f"""
+                SELECT name
+                FROM core.{relation}
+                WHERE trim(coalesce({health_col}, '')) <> ''
+                ORDER BY name ASC
+                LIMIT 8
+                """
+            )
+        ).mappings().all()
+        names = [str(row["name"]) for row in rows]
+        response = f"I currently have health notes for {count} pandas."
+        if names:
+            response += " Examples include " + _join_natural(names) + "."
+        return AgentTurn(
+            intent="analytics_health_notes_available",
+            response=response,
+            data={"relation": relation, "count": count, "sample_names": names},
+        )
+
     eligible_pat = re.match(
         r"^(?:how many|count)\s+eligible\s+pandas(?:\s+are\s+there)?\??$",
         lower,
@@ -890,10 +1795,111 @@ def analytics_chat_response(
     if eligible_pat:
         relation = pick_relation(session, "core", ["breedeable_pandas", "breedable_pandas"])
         total = scalar_int(session, f"SELECT COUNT(*) AS n FROM core.{relation}")
+        memory["last_eligible_relation"] = relation
+        _remember_query_kind(memory, "analytics_count_eligible")
         return AgentTurn(
             intent="analytics_count_eligible",
-            response=f"There are {total} eligible pandas in core.{relation}.",
+            response=f"There are {total} eligible pandas.",
             data={"relation": relation, "count": total},
+        )
+
+    location_count_pat = re.match(
+        r"^(?:how many|count)\s+pandas\s+(?:are\s+)?(?:in|from|located\s+in)\s+(.+?)\??$",
+        lower,
+    )
+    location_any_pat = re.match(
+        r"^are\s+there\s+any\s+pandas\s+(?:in|from|located\s+in)\s+(.+?)\??$",
+        lower,
+    )
+    if location_count_pat:
+        query_location, display_location, requested_location = _normalize_location_hint(
+            location_count_pat.group(1),
+        )
+        total = scalar_int(
+            session,
+            """
+            SELECT COUNT(*) AS n
+            FROM core.panda_profiles
+            WHERE lower(coalesce(country, '')) = lower(:location)
+               OR lower(coalesce(city_region, '')) = lower(:location)
+               OR lower(coalesce(zoo_or_facility, '')) LIKE lower(:location_like)
+            """,
+            {
+                "location": query_location,
+                "location_like": f"%{query_location}%",
+            },
+        )
+        return AgentTurn(
+            intent="analytics_count_location",
+            response=f"There are {total} pandas listed in {display_location}.",
+            data={
+                "requested_location": requested_location,
+                "normalized_location": query_location,
+                "display_location": display_location,
+                "count": total,
+            },
+        )
+    if location_any_pat:
+        query_location, display_location, requested_location = _normalize_location_hint(
+            location_any_pat.group(1),
+        )
+        total = scalar_int(
+            session,
+            """
+            SELECT COUNT(*) AS n
+            FROM core.panda_profiles
+            WHERE lower(coalesce(country, '')) = lower(:location)
+               OR lower(coalesce(city_region, '')) = lower(:location)
+               OR lower(coalesce(zoo_or_facility, '')) LIKE lower(:location_like)
+            """,
+            {
+                "location": query_location,
+                "location_like": f"%{query_location}%",
+            },
+        )
+        if total == 0:
+            response = f"No, I do not see any pandas listed in {display_location}."
+        elif total == 1:
+            response = f"Yes, there is 1 panda listed in {display_location}."
+        else:
+            response = f"Yes, there are {total} pandas listed in {display_location}."
+        return AgentTurn(
+            intent="analytics_count_location",
+            response=response,
+            data={
+                "requested_location": requested_location,
+                "normalized_location": query_location,
+                "display_location": display_location,
+                "count": total,
+            },
+        )
+
+    available_pat = re.match(
+        r"^(?:who|which pandas?)\s+(?:can|could)\s+(?:still\s+)?"
+        r"(?:be\s+)?(?:matched|paired|bred)\??$",
+        lower,
+    )
+    if available_pat:
+        relation = pick_relation(session, "core", ["breedeable_pandas", "breedable_pandas"])
+        total = scalar_int(session, f"SELECT COUNT(*) AS n FROM core.{relation}")
+        sample_rows = session.execute(
+            text(
+                f"""
+                SELECT name
+                FROM core.{relation}
+                ORDER BY name
+                LIMIT 10
+                """
+            )
+        ).mappings().all()
+        names = [str(row["name"]) for row in sample_rows]
+        response = f"{total} pandas are currently in core.{relation}."
+        if names:
+            response += " Examples include " + _join_natural(names) + "."
+        return AgentTurn(
+            intent="eligibility_available_pandas",
+            response=response,
+            data={"relation": relation, "count": total, "sample_names": names},
         )
 
     all_pat = re.match(
@@ -902,9 +1908,10 @@ def analytics_chat_response(
     )
     if all_pat:
         total = scalar_int(session, "SELECT COUNT(*) AS n FROM core.panda_profiles")
+        _remember_query_kind(memory, "analytics_count_pandas")
         return AgentTurn(
             intent="analytics_count_pandas",
-            response=f"There are {total} pandas in core.panda_profiles.",
+            response=f"There are {total} pandas in the dataset.",
             data={"relation": "core.panda_profiles", "count": total},
         )
 
@@ -932,11 +1939,11 @@ def analytics_chat_response(
             WHERE lower(coalesce(sex, '')) = 'female'
             """,
         )
+        _remember_query_kind(memory, "analytics_count_sex_split")
         return AgentTurn(
             intent="analytics_count_sex_split",
             response=(
-                f"There are {male_total} male pandas and {female_total} female pandas "
-                "in core.panda_profiles."
+                f"There are {male_total} male pandas and {female_total} female pandas."
             ),
             data={"male_count": male_total, "female_count": female_total},
         )
@@ -954,6 +1961,7 @@ def analytics_chat_response(
             """,
             {"status": normalized},
         )
+        _remember_query_kind(memory, "analytics_count_status")
         return AgentTurn(
             intent="analytics_count_status",
             response=f"There are {total} pandas with status '{normalized}'.",
@@ -978,9 +1986,10 @@ def analytics_chat_response(
             """,
             {"sex": sex},
         )
+        _remember_query_kind(memory, "analytics_count_sex")
         return AgentTurn(
             intent="analytics_count_sex",
-            response=f"There are {total} {sex} pandas in core.panda_profiles.",
+            response=f"There are {total} {sex} pandas.",
             data={"sex": sex, "count": total},
         )
 
@@ -1078,8 +2087,21 @@ def unsupported_chat_response(message: str) -> AgentTurn | None:
 def route_chat_message(session: Session, message: str, memory: dict[str, str]) -> AgentTurn:
     lower = message.lower()
     query_text = re.split(r"[.?!]\s+", message.strip(), maxsplit=1)[0].strip()
+    intent_decision = classify_chat_intent(message, memory)
 
     explain_match_pattern = re.match(r"^(?:explain|why)\s+(\S+)\s+(\S+)$", query_text.lower())
+    explain_pair_pattern = re.match(
+        r"^(?:explain|why)\s+(.+?)\s+and\s+(.+?)(?:\s+(?:match|compatible|work|not work).*)?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    explain_context_pair_pattern = re.match(
+        r"^why\s+(?:are|is|would|could)\s+(?:they|that|this)\s+"
+        r"(?:a\s+)?(?:good|great|bad|weak|strong|compatible)?\s*"
+        r"(?:match|pair|pairing|compatible)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
     top_pattern = re.search(
         r"(?:top|best)\s*(\d+)?\s*matches(?:\s+for)?\s+(.+)$",
         query_text,
@@ -1090,8 +2112,30 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         query_text,
         flags=re.IGNORECASE,
     )
+    name_first_top_pattern = re.match(
+        r"^(?:(?:who\s+are|whoa\s+re|who\s+rae|show\s+me|give\s+me)\s+)?"
+        r"(.+?)\s+(?:top|best)\s*(\d+)?\s+matches\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    what_about_pattern = re.match(
+        r"^(?:what|how)\s+about\s+(.+?)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    and_follow_up_pattern = re.match(
+        r"^and\s+(.+?)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
     first_match_explanation_pattern = re.match(
         r"^why\s+is\s+(.+)\s+(.+?)'s\s+first\s+top\s+match\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    top_matches_explanation_pattern = re.match(
+        r"^why\s+(?:are|do)\s+(.+?)'s\s+top\s+matches\s+"
+        r"(?:score(?:d)?\s+highly|rank\s+so\s+high|do\s+so\s+well)\??$",
         query_text,
         flags=re.IGNORECASE,
     )
@@ -1105,8 +2149,28 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         query_text,
         flags=re.IGNORECASE,
     )
+    best_for_pattern = re.match(
+        r"^(?:who\s+is\s+|what\s+is\s+|show\s+me\s+|find\s+)?(?:the\s+)?"
+        r"(?:best|top|ideal|strongest|most\s+compatible)\s+"
+        r"(?:match|partner|pairing)(?:\s+for)?\s+(.+?)\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    breeding_partner_pattern = re.match(
+        r"^(?:who\s+should|who\s+could|who\s+would)\s+(.+?)\s+"
+        r"(?:breed|mate|pair)(?:\s+with)?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
     great_match_pattern = re.match(
         r"^do\s+you\s+think\s+(.+?)\s+and\s+(.+?)\s+would\s+make\s+a\s+great\s+match(?:,?\s*why(?:\s+and\s+why\s+not)?)?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    broad_pair_match_pattern = re.match(
+        r"^(?:would|could|should|is|are)\s+(.+?)\s+and\s+(.+?)\s+"
+        r"(?:make\s+)?(?:a\s+)?(?:good|great|strong|compatible|suitable)?\s*"
+        r"(?:match|pair|pairing|breeding\s+pair|compatible)(?:,?\s*why(?:\s+and\s+why\s+not)?)?\??$",
         query_text,
         flags=re.IGNORECASE,
     )
@@ -1115,17 +2179,60 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         query_text,
         flags=re.IGNORECASE,
     )
+    odd_pair_explanation_pattern = re.search(
+        r"it\s+seems\s+odd\s+to\s+me\s+that\s+(.+?)\s+and\s+(.+?)\s+make\s+a\s+"
+        r"(?:good|great|strong)\s+match",
+        query_text,
+        flags=re.IGNORECASE,
+    )
     global_best_pattern = re.search(
-        r"(?:best overall|overall best|best match across all|across all pandas|global best)",
+        (
+            r"(?:best overall|overall best|best match across all|across all pandas|"
+            r"global best|most eligible panda|most eligible match|best panda match|"
+            r"best overall pair|recommend(?:\s+me)?\s+a\s+panda match|"
+            r"tell me about a panda match)"
+        ),
         lower,
     )
     blockers_pattern = re.match(r"^blockers(?:\s+for)?\s+(.+)$", query_text, flags=re.IGNORECASE)
+    vague_best_match = (
+        _is_vague_best_match_query(query_text)
+        and not (
+            first_match_explanation_pattern
+            or second_match_explanation_pattern
+            or top_pattern
+            or possessive_top_pattern
+            or name_first_top_pattern
+            or best_for_pattern
+            or breeding_partner_pattern
+            or explain_context_pair_pattern
+            or explain_pair_pattern
+            or great_match_pattern
+            or broad_pair_match_pattern
+            or pairwise_pattern
+            or odd_pair_explanation_pattern
+        )
+    )
     profile_name = extract_name_from_question(message)
     asks_age = "how old" in lower or "age of" in lower
     asks_location = "where is" in lower or "location of" in lower
     asks_health = "health" in lower
+    asks_status = any(marker in lower for marker in ("alive", "dead", "deceased", "status"))
     asks_personality = "personality" in lower
     asks_fun_fact = "fun fact" in lower
+    asks_cubs = bool(
+        re.search(r"\b(cubs|babies)\b", lower)
+        and re.search(r"\b(have|has|how many|any)\b", lower)
+    )
+    asks_explain_calculation = bool(
+        re.search(
+            r"\b(how are you calculating that|how is that calculated|how do you calculate that)\b",
+            lower,
+        )
+    )
+    asks_explain_weak_overlap = bool(
+        "weak personality overlap" in lower and re.search(r"\b(explain|why)\b", lower)
+    )
 
     unsupported_response = unsupported_chat_response(message)
     if unsupported_response is not None:
@@ -1135,8 +2242,211 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
     if analytics_response is not None:
         return analytics_response
 
+    if asks_explain_calculation and memory.get("last_query_kind") == "analytics_count_eligible":
+        relation = memory.get("last_eligible_relation", "breedeable_pandas")
+        return AgentTurn(
+            intent="analytics_count_eligible_explained",
+            response=(
+                "I am counting rows in the current eligible breeding list. "
+                f"Right now that comes from `core.{relation}`, which is the table the app uses "
+                "for pandas that made it into the breeding-eligible set."
+            ),
+            data={"relation": relation},
+        )
+
+    if asks_explain_weak_overlap and {"last_panda_name", "last_candidate_name"}.issubset(memory):
+        return _ranked_pair_turn(
+            session=session,
+            message=message,
+            memory=memory,
+            focal_name=memory["last_panda_name"],
+            candidate_name=memory["last_candidate_name"],
+            explanation=True,
+        )
+
+    if intent_decision.needs_clarification:
+        return AgentTurn(
+            intent="clarification_needed",
+            response=(
+                "Which panda should I use for that match question? You can ask for a "
+                "specific panda or say 'best overall pair'."
+            ),
+            data={"intent": intent_decision.__dict__, "memory": memory},
+        )
+
+    if global_best_pattern:
+        result = best_overall_match_data(session, k=1)
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="best_overall_empty",
+                response="I could not find any ranked matches in the current scoring view.",
+                data=result,
+            )
+        top = result["matches"][0]
+        memory["last_panda_name"] = str(top.get("focal_panda_name") or "")
+        memory["last_candidate_name"] = str(top.get("candidate_panda_name") or "")
+        _remember_query_kind(memory, "best_overall")
+        return AgentTurn(
+            intent="best_overall",
+            response=_deterministic_best_overall_response(
+                top,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data={"best_match": top, "ranking_meta": result},
+        )
+
+    if best_for_pattern:
+        panda_name = best_for_pattern.group(1).strip(" ?.")
+        resolved_name = _resolve_contextual_panda_name(session, panda_name, memory)
+        result = top_matches_data(session, panda_name=resolved_name, k=1)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnose_no_matches(session, panda_name=resolved_name),
+                    curated=curated_override_for_name(session, panda_name=resolved_name),
+                ),
+                data=result,
+            )
+        if result["matches"]:
+            memory["last_candidate_name"] = str(
+                result["matches"][0].get("candidate_panda_name") or ""
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=resolved_name,
+                matches=result["matches"],
+                requested_k=1,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if breeding_partner_pattern:
+        panda_name = breeding_partner_pattern.group(1).strip(" ?.")
+        resolved_name = _resolve_contextual_panda_name(session, panda_name, memory)
+        result = top_matches_data(session, panda_name=resolved_name, k=1)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnose_no_matches(session, panda_name=resolved_name),
+                    curated=curated_override_for_name(session, panda_name=resolved_name),
+                ),
+                data=result,
+            )
+        if result["matches"]:
+            memory["last_candidate_name"] = str(
+                result["matches"][0].get("candidate_panda_name") or ""
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=resolved_name,
+                matches=result["matches"],
+                requested_k=1,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if vague_best_match and "last_panda_name" in memory:
+        panda_name = memory["last_panda_name"]
+        result = top_matches_data(session, panda_name=panda_name, k=1)
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnose_no_matches(session, panda_name=panda_name),
+                    curated=curated_override_for_name(session, panda_name=panda_name),
+                ),
+                data=result,
+            )
+        if result["matches"]:
+            memory["last_candidate_name"] = str(
+                result["matches"][0].get("candidate_panda_name") or ""
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=panda_name,
+                matches=result["matches"],
+                requested_k=1,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if vague_best_match:
+        result = best_overall_match_data(session, k=1)
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="best_overall_empty",
+                response="I could not find any ranked matches in the current scoring view.",
+                data=result,
+            )
+        top = result["matches"][0]
+        memory["last_panda_name"] = str(top.get("focal_panda_name") or "")
+        memory["last_candidate_name"] = str(top.get("candidate_panda_name") or "")
+        _remember_query_kind(memory, "best_overall")
+        return AgentTurn(
+            intent="best_overall",
+            response=_deterministic_best_overall_response(
+                top,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data={"best_match": top, "ranking_meta": result},
+        )
+
+    if explain_context_pair_pattern and {
+        "last_panda_name",
+        "last_candidate_name",
+    }.issubset(memory):
+        return _ranked_pair_turn(
+            session=session,
+            message=message,
+            memory=memory,
+            focal_name=memory["last_panda_name"],
+            candidate_name=memory["last_candidate_name"],
+            explanation=True,
+        )
+
+    if explain_pair_pattern:
+        return _ranked_pair_turn(
+            session=session,
+            message=message,
+            memory=memory,
+            focal_name=explain_pair_pattern.group(1).strip(" ?."),
+            candidate_name=explain_pair_pattern.group(2).strip(" ?."),
+            explanation=True,
+        )
+
+    explain_subject_pattern = re.match(
+        r"^explain\s+(.+?)(?:\s+(?:match|compatibility|pairing))?\??$",
+        query_text,
+        flags=re.IGNORECASE,
+    )
+    if explain_subject_pattern:
+        resolved_pair = _resolve_subject_pair(session, explain_subject_pattern.group(1))
+        if resolved_pair is not None:
+            candidate_name, resolved_name = resolved_pair
+            return _ranked_pair_turn(
+                session=session,
+                message=message,
+                memory=memory,
+                focal_name=resolved_name,
+                candidate_name=candidate_name,
+                explanation=True,
+            )
+
     if profile_name:
-        resolved_name = find_panda_name_by_substring(session, profile_name) or profile_name
+        resolved_name = _resolve_contextual_panda_name(session, profile_name, memory)
         profile = panda_profile_data(session, panda_name=resolved_name)
         if not profile:
             return AgentTurn(
@@ -1146,6 +2456,16 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             )
 
         memory["last_panda_name"] = str(profile.get("name") or resolved_name)
+        _remember_profile_query_kind(
+            memory,
+            asks_age=asks_age,
+            asks_location=asks_location,
+            asks_health=asks_health,
+            asks_status=asks_status,
+            asks_personality=asks_personality,
+            asks_fun_fact=asks_fun_fact,
+            asks_cubs=asks_cubs,
+        )
         if asks_age:
             response = (
                 f"{profile['name']} is approximately {profile.get('age_years')} years old."
@@ -1164,12 +2484,23 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 if location_text
                 else f"I do not have a current location for {profile['name']}."
             )
-        elif asks_health:
-            response = (
-                f"Health notes for {profile['name']}: {profile.get('health_text')}"
-                if profile.get("health_text")
-                else f"I do not have health notes for {profile['name']}."
-            )
+        elif asks_health or asks_status:
+            status_text = str(profile.get("status") or "unknown").strip()
+            health_text = str(profile.get("health_text") or "").strip()
+            if asks_status and asks_health:
+                response = f"{profile['name']} is listed as {status_text}."
+                if health_text:
+                    response += f" Health notes: {health_text}"
+            elif asks_status:
+                response = f"{profile['name']} is listed as {status_text}."
+            else:
+                if health_text:
+                    response = f"Health notes for {profile['name']}: {health_text}"
+                else:
+                    response = (
+                        f"I do not have detailed health notes for {profile['name']}. "
+                        f"The profile currently lists {profile['name']} as {status_text}."
+                    )
         elif asks_personality:
             response = (
                 f"Personality notes for {profile['name']}: {profile.get('personality_text')}"
@@ -1178,38 +2509,24 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             )
         elif asks_fun_fact:
             response = _profile_fun_fact_response(profile)
+        elif asks_cubs:
+            babies = profile.get("babies_had_count")
+            if babies in (None, ""):
+                response = f"I do not have cub records for {profile['name']}."
+            elif int(babies) == 0:
+                response = f"No, I do not see any cubs recorded for {profile['name']}."
+            elif int(babies) == 1:
+                response = f"Yes, {profile['name']} has 1 cub recorded."
+            else:
+                response = f"Yes, {profile['name']} has {babies} cubs recorded."
+            if babies not in (None, "", 0, "0"):
+                offspring = _offspring_summary(session, str(profile["name"]))
+                if offspring:
+                    response += f" {offspring}"
         else:
-            age_text = (
-                str(profile.get("age_years"))
-                if profile.get("age_years") is not None
-                else "unknown"
-            )
-            response = (
-                f"{profile['name']} is a {profile.get('sex') or 'unknown-sex'} panda, "
-                f"status={profile.get('status') or 'unknown'}, "
-                f"age={age_text}."
-            )
+            response = _profile_overview_response(profile)
 
         return AgentTurn(intent="panda_info", response=response, data={"profile": profile})
-
-    if global_best_pattern:
-        result = best_overall_match_data(session, k=1)
-        if result["count"] == 0:
-            return AgentTurn(
-                intent="best_overall_empty",
-                response="I could not find any ranked matches in the current scoring view.",
-                data=result,
-            )
-        top = result["matches"][0]
-        response = (
-            "Best overall match across all focal pandas loaded. "
-            "This is the highest-scoring directional pair in the current ranking view."
-        )
-        return AgentTurn(
-            intent="best_overall",
-            response=response,
-            data={"best_match": top, "ranking_meta": result},
-        )
 
     if pairwise_pattern:
         candidate_a_name = pairwise_pattern.group(1).strip(" ?.")
@@ -1245,49 +2562,32 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             data=result,
         )
 
-    if great_match_pattern:
-        focal_name = great_match_pattern.group(1).strip(" ?.")
-        candidate_name = great_match_pattern.group(2).strip(" ?.")
-        resolved_focal = find_panda_name_by_substring(session, focal_name) or focal_name
-        result = top_matches_data(session, panda_name=resolved_focal, k=20)
-        matches = result["matches"]
-        candidate_row = _find_candidate_row(matches, candidate_name)
-        top_row = matches[0] if matches else None
-        if not candidate_row:
-            return AgentTurn(
-                intent="pairwise_match_not_found",
-                response=(
-                    f"I could not find {candidate_name} in the current ranked matches for "
-                    f"{resolved_focal}, so I cannot give a grounded comparison yet."
-                ),
-                data=result,
-            )
-        memory["last_panda_name"] = resolved_focal
-        return AgentTurn(
-            intent="pairwise_match_opinion",
-            response=_deterministic_pair_opinion_response(
-                focal_name=resolved_focal,
-                candidate_name=str(candidate_row.get("candidate_panda_name") or candidate_name),
-                candidate_row=candidate_row,
-                top_row=top_row,
-            ),
-            data={
-                "panda_name": resolved_focal,
-                "candidate_name": candidate_name,
-                "match": candidate_row,
-                "matches": matches,
-            },
+    pair_opinion_pattern = great_match_pattern or broad_pair_match_pattern
+    if pair_opinion_pattern:
+        return _ranked_pair_turn(
+            session=session,
+            message=message,
+            memory=memory,
+            focal_name=pair_opinion_pattern.group(1).strip(" ?."),
+            candidate_name=pair_opinion_pattern.group(2).strip(" ?."),
+            explanation=False,
         )
 
-    if top_pattern:
-        k_raw = top_pattern.group(1)
-        panda_name = top_pattern.group(2).strip()
-        k = int(k_raw) if k_raw else 5
-        result = top_matches_data(session, panda_name=panda_name, k=k)
-        memory["last_panda_name"] = panda_name
+    follow_up_name: str | None = None
+    if what_about_pattern:
+        follow_up_name = what_about_pattern.group(1).strip(" ?.")
+    elif and_follow_up_pattern:
+        follow_up_name = and_follow_up_pattern.group(1).strip(" ?.")
+
+    if follow_up_name and memory.get("last_query_kind") == "top_matches":
+        panda_name = follow_up_name
+        resolved_name = find_panda_name_by_substring(session, panda_name) or panda_name
+        result = top_matches_data(session, panda_name=resolved_name, k=5)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
         if result["count"] == 0:
-            diagnosis = diagnose_no_matches(session, panda_name=panda_name)
-            curated = curated_override_for_name(session, panda_name=panda_name)
+            diagnosis = diagnose_no_matches(session, panda_name=resolved_name)
+            curated = curated_override_for_name(session, panda_name=resolved_name)
             return AgentTurn(
                 intent="top_matches_no_results",
                 response=_deterministic_no_match_response(
@@ -1295,8 +2595,8 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                     curated=curated,
                 ),
                 data={
-                    "requested_top_k": k,
-                    "panda_name": panda_name,
+                    "requested_top_k": 5,
+                    "panda_name": resolved_name,
                     "matches": [],
                     "diagnosis": diagnosis,
                     "curated_profile": curated,
@@ -1305,7 +2605,72 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         return AgentTurn(
             intent="top_matches",
             response=_deterministic_top_matches_response(
-                focal_name=panda_name,
+                focal_name=resolved_name,
+                matches=result["matches"],
+                requested_k=5,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if follow_up_name and memory.get("last_query_kind") in {
+        "health",
+        "status",
+        "fun_fact",
+        "personality",
+        "location",
+        "age",
+        "cubs",
+        "profile",
+    }:
+        kind = memory["last_query_kind"]
+        if kind == "health":
+            synthetic = f"health of {follow_up_name}"
+        elif kind == "status":
+            synthetic = f"is {follow_up_name} alive or dead?"
+        elif kind == "fun_fact":
+            synthetic = f"tell me a fun fact about {follow_up_name}"
+        elif kind == "personality":
+            synthetic = f"personality of {follow_up_name}"
+        elif kind == "location":
+            synthetic = f"where is {follow_up_name}"
+        elif kind == "age":
+            synthetic = f"how old is {follow_up_name}"
+        elif kind == "cubs":
+            synthetic = f"does {follow_up_name} have any cubs?"
+        else:
+            synthetic = f"tell me more about {follow_up_name}"
+        return route_chat_message(session, synthetic, memory)
+
+    if top_pattern:
+        k_raw = top_pattern.group(1)
+        panda_name = _clean_panda_name_hint(top_pattern.group(2))
+        k = int(k_raw) if k_raw else 5
+        resolved_name = find_panda_name_by_substring(session, panda_name) or panda_name
+        result = top_matches_data(session, panda_name=resolved_name, k=k)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            diagnosis = diagnose_no_matches(session, panda_name=resolved_name)
+            curated = curated_override_for_name(session, panda_name=resolved_name)
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnosis,
+                    curated=curated,
+                ),
+                data={
+                    "requested_top_k": k,
+                    "panda_name": resolved_name,
+                    "matches": [],
+                    "diagnosis": diagnosis,
+                    "curated_profile": curated,
+                },
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=resolved_name,
                 matches=result["matches"],
                 requested_k=k,
                 detailed=_wants_numeric_detail(message),
@@ -1320,6 +2685,7 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
         resolved_name = find_panda_name_by_substring(session, panda_name) or panda_name
         result = top_matches_data(session, panda_name=resolved_name, k=k)
         memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
         if result["count"] == 0:
             return AgentTurn(
                 intent="top_matches_no_results",
@@ -1335,6 +2701,60 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 focal_name=resolved_name,
                 matches=result["matches"],
                 requested_k=k,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if name_first_top_pattern:
+        panda_name = _clean_panda_name_hint(name_first_top_pattern.group(1))
+        k_raw = name_first_top_pattern.group(2)
+        k = int(k_raw) if k_raw else 5
+        resolved_name = find_panda_name_by_substring(session, panda_name) or panda_name
+        result = top_matches_data(session, panda_name=resolved_name, k=k)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnose_no_matches(session, panda_name=resolved_name),
+                    curated=curated_override_for_name(session, panda_name=resolved_name),
+                ),
+                data=result,
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=resolved_name,
+                matches=result["matches"],
+                requested_k=k,
+                detailed=_wants_numeric_detail(message),
+            ),
+            data=result,
+        )
+
+    if top_matches_explanation_pattern:
+        panda_name = top_matches_explanation_pattern.group(1).strip(" ?.")
+        resolved_name = find_panda_name_by_substring(session, panda_name) or panda_name
+        result = top_matches_data(session, panda_name=resolved_name, k=5)
+        memory["last_panda_name"] = resolved_name
+        _remember_query_kind(memory, "top_matches")
+        if result["count"] == 0:
+            return AgentTurn(
+                intent="top_matches_no_results",
+                response=_deterministic_no_match_response(
+                    diagnosis=diagnose_no_matches(session, panda_name=resolved_name),
+                    curated=curated_override_for_name(session, panda_name=resolved_name),
+                ),
+                data=result,
+            )
+        return AgentTurn(
+            intent="top_matches",
+            response=_deterministic_top_matches_response(
+                focal_name=resolved_name,
+                matches=result["matches"],
+                requested_k=5,
                 detailed=_wants_numeric_detail(message),
             ),
             data=result,
@@ -1428,9 +2848,8 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             if lead_positive:
                 response += f", helped mainly by {lead_positive}"
             response += (
-                ". If you were expecting no matches, the mismatch is probably coming "
-                "from a different filter, a different table, or an earlier stage of "
-                f"the pipeline rather than from {resolved_name} having no ranked options."
+                ". If you expected no matches, you were probably looking at a different "
+                f"view of the data, because {resolved_name} does have ranked options here."
             )
             return AgentTurn(
                 intent="no_match_diagnosis",
@@ -1452,6 +2871,18 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
                 "diagnosis": diagnosis,
                 "curated_profile": curated,
             },
+        )
+
+    if odd_pair_explanation_pattern:
+        focal_name = odd_pair_explanation_pattern.group(1).strip(" ?.")
+        candidate_name = odd_pair_explanation_pattern.group(2).strip(" ?.")
+        return _ranked_pair_turn(
+            session=session,
+            message=message,
+            memory=memory,
+            focal_name=focal_name,
+            candidate_name=candidate_name,
+            explanation=True,
         )
 
     if explain_match_pattern:
@@ -1493,6 +2924,8 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
             response=(
                 "Commands: "
                 "'top 5 matches for Bao Li' (or 'give me the top 5 matches for Bao Li'), "
+                "'best overall panda match', "
+                "'tell me about a panda match', "
                 "'explain <focal_id> <candidate_id>', "
                 "'blockers for <focal_id|name>', "
                 "'how many eligible pandas', 'count alive pandas', "
@@ -1514,13 +2947,14 @@ def route_chat_message(session: Session, message: str, memory: dict[str, str]) -
     return AgentTurn(
         intent="fallback",
         response=(
-            "I can help with matches. Try: "
-            "'best overall panda match', "
-            "'top 5 matches for Bao Li', "
-            "'explain <focal_id> <candidate_id>', "
-            "'blockers for <focal_id|name>', "
-            "'how many eligible pandas', "
-            "'who is <name>', 'health of <name>'."
+            "I'm sorry, I could not understand that. It might have been a typo.\n\n"
+            "I can help with matches and questions like:\n"
+            "- best overall panda match\n"
+            "- top 5 matches for Ai Bao\n"
+            "- who is the best match for Bao Li\n"
+            "- why is Xi Lan Ai Bao's first top match\n"
+            "- does Er Shun have any cubs\n"
+            "- who is the oldest panda in the dataset"
         ),
         data={"memory": memory},
     )

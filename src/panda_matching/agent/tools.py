@@ -80,11 +80,63 @@ def top_matches_data(session: Session, panda_name: str, k: int) -> dict[str, Any
             detail=f"{ranked_view} is missing a recommendation rank column",
         )
 
+    profile_relation = (
+        "panda_profiles_agent"
+        if relation_exists(session, "core", "panda_profiles_agent")
+        else "panda_profiles"
+    )
+    profile_columns = relation_columns(session, schema="core", relation=profile_relation)
+    has_profile_photos = {"photo_url", "photo_source_url"}.issubset(profile_columns)
+    personality_col = (
+        "personality_tags_agent"
+        if "personality_tags_agent" in profile_columns
+        else "personality_tags"
+    )
+    health_col = (
+        "health_notes_agent" if "health_notes_agent" in profile_columns else "health_notes"
+    )
+    extra_select = ""
+    joins = ""
+    if has_profile_photos:
+        if {"focal_panda_id", "candidate_panda_id"}.issubset(columns):
+            joins = """
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
+                  ON focal_profile.source_id = r.focal_panda_id
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
+                  ON candidate_profile.source_id = r.candidate_panda_id
+            """
+        elif {"focal_panda_name", "candidate_panda_name"}.issubset(columns):
+            joins = """
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
+                  ON lower(trim(focal_profile.name)) = lower(trim(r.focal_panda_name))
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
+                  ON lower(trim(candidate_profile.name)) = lower(trim(r.candidate_panda_name))
+            """
+        if joins:
+            extra_select = """
+                ,
+                focal_profile.photo_url AS focal_photo_url,
+                focal_profile.photo_source_url AS focal_photo_source_url,
+                candidate_profile.photo_url AS candidate_photo_url,
+                candidate_profile.photo_source_url AS candidate_photo_source_url,
+                focal_profile.zoo_or_facility AS focal_zoo_or_facility,
+                focal_profile.city_region AS focal_city_region,
+                focal_profile.country AS focal_country,
+                candidate_profile.zoo_or_facility AS candidate_zoo_or_facility,
+                candidate_profile.city_region AS candidate_city_region,
+                candidate_profile.country AS candidate_country,
+                focal_profile.""" + personality_col + """ AS focal_personality_text,
+                candidate_profile.""" + personality_col + """ AS candidate_personality_text,
+                focal_profile.""" + health_col + """ AS focal_health_text,
+                candidate_profile.""" + health_col + """ AS candidate_health_text
+            """
+
     sql = f"""
-        SELECT *
-        FROM core.{ranked_view}
-        WHERE lower({focal_col}) = lower(:panda_name)
-        ORDER BY {rank_col}
+        SELECT r.* {extra_select}
+        FROM core.{ranked_view} r
+        {joins}
+        WHERE lower(r.{focal_col}) = lower(:panda_name)
+        ORDER BY r.{rank_col}
         LIMIT :k
     """
     matches = rows(session, sql, {"panda_name": panda_name, "k": k})
@@ -249,10 +301,62 @@ def best_overall_match_data(session: Session, k: int = 1) -> dict[str, Any]:
             detail=f"{ranked_view} has no supported score column for global ranking",
         )
 
+    profile_relation = (
+        "panda_profiles_agent"
+        if relation_exists(session, "core", "panda_profiles_agent")
+        else "panda_profiles"
+    )
+    profile_columns = relation_columns(session, schema="core", relation=profile_relation)
+    has_profile_photos = {"photo_url", "photo_source_url"}.issubset(profile_columns)
+    personality_col = (
+        "personality_tags_agent"
+        if "personality_tags_agent" in profile_columns
+        else "personality_tags"
+    )
+    health_col = (
+        "health_notes_agent" if "health_notes_agent" in profile_columns else "health_notes"
+    )
+    extra_select = ""
+    joins = ""
+    if has_profile_photos:
+        if {"focal_panda_id", "candidate_panda_id"}.issubset(cols):
+            joins = """
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
+                  ON focal_profile.source_id = r.focal_panda_id
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
+                  ON candidate_profile.source_id = r.candidate_panda_id
+            """
+        elif {"focal_panda_name", "candidate_panda_name"}.issubset(cols):
+            joins = """
+                LEFT JOIN core.""" + profile_relation + """ focal_profile
+                  ON lower(trim(focal_profile.name)) = lower(trim(r.focal_panda_name))
+                LEFT JOIN core.""" + profile_relation + """ candidate_profile
+                  ON lower(trim(candidate_profile.name)) = lower(trim(r.candidate_panda_name))
+            """
+        if joins:
+            extra_select = """
+                ,
+                focal_profile.photo_url AS focal_photo_url,
+                focal_profile.photo_source_url AS focal_photo_source_url,
+                candidate_profile.photo_url AS candidate_photo_url,
+                candidate_profile.photo_source_url AS candidate_photo_source_url,
+                focal_profile.zoo_or_facility AS focal_zoo_or_facility,
+                focal_profile.city_region AS focal_city_region,
+                focal_profile.country AS focal_country,
+                candidate_profile.zoo_or_facility AS candidate_zoo_or_facility,
+                candidate_profile.city_region AS candidate_city_region,
+                candidate_profile.country AS candidate_country,
+                focal_profile.""" + personality_col + """ AS focal_personality_text,
+                candidate_profile.""" + personality_col + """ AS candidate_personality_text,
+                focal_profile.""" + health_col + """ AS focal_health_text,
+                candidate_profile.""" + health_col + """ AS candidate_health_text
+            """
+
     sql = f"""
-        SELECT *
-        FROM core.{ranked_view}
-        ORDER BY {order_col} DESC
+        SELECT r.* {extra_select}
+        FROM core.{ranked_view} r
+        {joins}
+        ORDER BY r.{order_col} DESC
         LIMIT :k
     """
     match_rows = rows(session, sql, {"k": k})
@@ -311,11 +415,15 @@ def panda_profile_data(session: Session, panda_name: str) -> dict[str, Any] | No
     )
     health_col = "health_notes_agent" if "health_notes_agent" in cols else "health_notes"
     desc_col = "description_agent" if "description_agent" in cols else "description"
+    photo_url_expr = "photo_url" if "photo_url" in cols else "NULL::text"
+    photo_source_url_expr = "photo_source_url" if "photo_source_url" in cols else "NULL::text"
 
     sql = f"""
         SELECT
             source_id, name, chinese_name, sex, age_years, birth_date,
             zoo_or_facility, city_region, country, status, babies_had_count,
+            {photo_url_expr} AS photo_url,
+            {photo_source_url_expr} AS photo_source_url,
             {personality_col} AS personality_text,
             {health_col} AS health_text,
             {desc_col} AS description_text

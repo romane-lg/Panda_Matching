@@ -15,6 +15,7 @@ from panda_matching.db.models import PandaProfile
 from panda_matching.db.session import get_sessionmaker
 
 PANDAS_URL = "https://blackandwhitebear.com/data/pandas.json"
+PHOTO_SOURCE_URL = "https://blackandwhitebear.com/"
 
 
 def _base_name(name: str | None) -> str:
@@ -63,6 +64,7 @@ def _quality_score(row: dict[str, Any]) -> int:
         "mother",
         "father",
         "status",
+        "photo_url",
     ]
     score = sum(1 for field in fields if row.get(field))
     payload = row.get("raw_payload")
@@ -203,6 +205,8 @@ def load_profiles() -> int:
                 "on_loan": on_loan,
                 "ownership_category": ownership_category,
                 "status": raw.get("status"),
+                "photo_url": raw.get("photo"),
+                "photo_source_url": PHOTO_SOURCE_URL if raw.get("photo") else None,
                 "raw_payload": raw,
             }
         )
@@ -270,6 +274,8 @@ def load_profiles() -> int:
                 "on_loan": stmt.excluded.on_loan,
                 "ownership_category": stmt.excluded.ownership_category,
                 "status": stmt.excluded.status,
+                "photo_url": stmt.excluded.photo_url,
+                "photo_source_url": stmt.excluded.photo_source_url,
                 "raw_payload": stmt.excluded.raw_payload,
                 "ingested_at": datetime.now(),
             },

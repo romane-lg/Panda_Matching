@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "run_baseline_eval.py"
 _SPEC = importlib.util.spec_from_file_location("run_baseline_eval", _MODULE_PATH)
 assert _SPEC is not None

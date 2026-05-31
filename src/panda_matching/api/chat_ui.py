@@ -158,7 +158,17 @@ def render_chat_ui() -> str:
         }
       }
 
-      addMessage("bot", "Chat ready. Type 'help' for supported commands.");
+      addMessage(
+        "bot",
+        "Hello I am your panda matching assistant!\n\n"
+          + "Here are some questions I can help you with:\n"
+          + "- best overall panda match\n"
+          + "- top 5 matches for Ai Bao\n"
+          + "- who is the best match for Bao Li\n"
+          + "- why is Xi Lan Ai Bao's first top match\n"
+          + "- does Er Shun have any cubs\n"
+          + "- who is the oldest panda in the dataset"
+      );
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const message = input.value.trim();

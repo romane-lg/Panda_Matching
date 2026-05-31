@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from panda_matching.agent.router import route_chat_message
 from panda_matching.agent.tools import (
@@ -36,6 +37,19 @@ class ChatResponse(BaseModel):
     intent: str
     response: str
     data: dict[str, Any] | None = None
+
+
+class PandaCatalogItem(BaseModel):
+    source_id: str
+    name: str
+    sex: str | None = None
+    age_years: int | None = None
+    zoo_or_facility: str | None = None
+    city_region: str | None = None
+    country: str | None = None
+    status: str | None = None
+    photo_url: str | None = None
+    photo_source_url: str | None = None
 
 
 @app.get("/health")
@@ -77,6 +91,33 @@ def get_blockers(
         return blockers_data(session, focal_id=focal_id)
 
 
+@app.get("/pandas", response_model=list[PandaCatalogItem])
+def list_pandas() -> list[PandaCatalogItem]:
+    session_maker = get_sessionmaker()
+    with session_maker() as session:
+        result = session.execute(
+            text(
+                """
+                SELECT
+                    source_id,
+                    name,
+                    sex,
+                    age_years,
+                    zoo_or_facility,
+                    city_region,
+                    country,
+                    status,
+                    photo_url,
+                    photo_source_url
+                FROM core.panda_profiles
+                WHERE photo_url IS NOT NULL
+                ORDER BY name
+                """
+            )
+        )
+        return [PandaCatalogItem(**dict(row)) for row in result.mappings().all()]
+
+
 @app.post("/agent/chat", response_model=ChatResponse)
 @trace(name="chat_agent_request", span_type=SpanType.AGENT)
 def chat_agent(payload: ChatRequest) -> ChatResponse:
@@ -114,7 +155,7 @@ def chat_agent(payload: ChatRequest) -> ChatResponse:
             session_id=session_id,
             intent=turn.intent,
             response=turn.response,
-            data=None,
+            data=safe_data,
         )
 
 
