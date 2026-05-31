@@ -1,447 +1,94 @@
-# Panda Matching Database
+# Panda Matching
 
-A PostgreSQL + Python system for panda breeding compatibility and conversational match exploration.
+Panda Matching is a PostgreSQL, FastAPI, and React application for exploring panda breeding compatibility. It combines a SQL matching pipeline, curated panda profile enrichment, explainable pair scoring, a REST API, and a browser chatbot.
 
-The project now includes:
+## What Is Included
 
-* Core SQL matching pipeline (eligibility → candidate pairs → recommendations)
-* Curated panda profile overrides (personality + health expert notes)
-* Text-derived feature extraction for explainable scoring
-* v2 pair scoring with score breakdowns
-* FastAPI endpoints + browser chat UI for agent-style interaction
-* Persistent chat memory (`chat_sessions`, `chat_messages`, `chat_state`)
-* Optional Databricks LLM conversational mode (planner/response + SQL tool fallback)
+- PostgreSQL schema managed by Alembic.
+- Import and refresh scripts for panda profile data from Black and White Bear.
+- Layered SQL views for profile cleanup, eligibility, candidate generation, and ranked recommendations.
+- Curated profile overrides for agent-facing personality and health notes.
+- Text-derived feature extraction and explainable v2 match scoring.
+- FastAPI endpoints for matches, explanations, blockers, pandas, and chat.
+- Persistent chat memory in PostgreSQL.
+- Optional Databricks foundation model mode with deterministic fallback behavior.
+- React + Vite frontend with chat, match cards, panda photos, and catalog browsing.
+- Offline regression tests and optional MLflow-based LLM evaluation.
 
----
+## Repository Layout
 
-# Project Overview
-
-This database simulates a panda breeding matching system. The goal is to recommend compatible breeding pairs based on biological constraints, lineage risk, personality compatibility, reproductive history, and data quality.
-
-The system is built as a layered SQL pipeline where each view builds on the previous one.
-
-Pipeline structure:
-
-```
-Raw panda data
-    ↓
-Clean panda profiles
-    ↓
-Curated profile overrides
-    ↓
-Agent-ready merged profile view
-    ↓
-Breeding eligibility
-    ↓
-Matching features
-    ↓
-Candidate pairs
-    ↓
-Scored recommendations
-    ↓
-Directional recommendations
-    ↓
-Text feature extraction
-    ↓
-Explainable v2 pair scoring
-    ↓
-Ranked matches per panda (v2)
+```text
+alembic/                 Database migrations
+data/                    Evaluation data and project data files
+docs/                    Additional project notes
+frontend/                React + TypeScript + Vite UI
+scripts/                 Import, refresh, scoring, and evaluation scripts
+src/panda_matching/      Python package
+tests/                   Pytest test suite
+docker-compose.yml       Local PostgreSQL service
+pyproject.toml           Python package and tool configuration
 ```
 
----
+Important Python modules:
 
-# Application Structure
+- `src/panda_matching/api/routes.py`: FastAPI app and REST routes.
+- `src/panda_matching/api/chat_ui.py`: simple server-rendered chat page at `/chat`.
+- `src/panda_matching/agent/router.py`: deterministic routing plus optional LLM routing.
+- `src/panda_matching/agent/llm.py`: Databricks model serving calls.
+- `src/panda_matching/agent/tools.py`: SQL-backed tool functions and chat memory.
+- `src/panda_matching/ingest/`: import helpers for source data.
+- `src/panda_matching/observability/`: MLflow tracing setup.
 
-The Python application is now split by responsibility instead of keeping API, UI, LLM, and routing logic in one file.
+## Requirements
 
-Main modules:
+- Python 3.10+
+- `uv`
+- Docker, for local PostgreSQL
+- Node.js and npm, for the React frontend
+- `psql`, if you want to run `scripts/refresh_pipeline.sh`
 
-* `src/panda_matching/api/routes.py` – FastAPI app, route definitions, request/response models, server entrypoint
-* `src/panda_matching/api/chat_ui.py` – browser chat UI HTML/JS
-* `src/panda_matching/agent/llm.py` – Databricks foundation model invocation, planning prompt, answer composition
-* `src/panda_matching/agent/tools.py` – SQL/data access helpers, chat memory persistence, structured tool payloads
-* `src/panda_matching/agent/router.py` – LLM-first routing plus deterministic fallback routing
-* `src/panda_matching/cli.py` – CLI import entrypoint
+The default local database URL is:
 
-Operational notes:
-
-* `uv run panda-matching-api` still works through `panda_matching.api:run`
-* `POST /agent/chat` is the user-facing conversational endpoint
-* raw structured outputs are still available through dedicated REST endpoints such as `GET /matches/top`
-
----
-
-# Database Schema Overview
-
-Schema used: `core`
-
-Main objects:
-
-| Object                                    | Type  | Purpose                                                    |
-| ----------------------------------------- | ----- | ---------------------------------------------------------- |
-| panda_profiles                            | Table | Raw + enriched panda profile records                       |
-| panda_profile_overrides                   | Table | Curated health/personality overrides for named pandas      |
-| chat_sessions                             | Table | One row per conversation session                           |
-| chat_messages                             | Table | Durable chat transcript with role/intent/data payload      |
-| chat_state                                | Table | Persistent short-term session memory (`last_panda_name`, etc.) |
-| panda_profiles_agent                      | View  | Merged agent view (`raw` + `curated` fallback columns)     |
-| panda_profiles_clean                      | View  | Cleaned and standardized panda data                        |
-| breedeable_pandas                         | View  | Pandas eligible for breeding                               |
-| matching_features                         | View  | Matching and data quality features per panda               |
-| candidate_pairs                           | View  | All possible panda pairs                                   |
-| recommended_matches                       | View  | Compatibility scoring for pairs                            |
-| directional_recommended_matches           | View  | Pair → focal/candidate directional format                  |
-| ranked_directional_recommended_matches    | View  | Original ranked recommendations                            |
-| panda_text_features                       | Table | Text-derived numeric/behavioral scoring features per panda |
-| match_scores_v2                           | Table | Explainable pair-level v2 scoring outputs                  |
-| ranked_directional_recommended_matches_v2 | View  | Final v2 ranked recommendations with breakdown             |
-
----
-
-# Table: panda_profiles (Base Table)
-
-This is the main raw dataset containing panda information.
-
-### Key Columns
-
-* source_id – Unique panda ID
-* name – Panda name
-* chinese_name – Chinese name
-* sex – Male/Female
-* birth_date – Date of birth
-* zoo_or_facility – Current zoo
-* city_region – City/Region
-* country – Country
-* mother – Mother name
-* father – Father name
-* babies_had_count – Number of babies
-* on_loan – Whether panda is on loan
-* ownership_category – Ownership type
-* status – alive/deceased
-* lineage – Genetic lineage group
-* personality_tags – Comma-separated personality traits
-* breeding_notes – Breeding notes
-* health_notes – Health notes
-
-This table contains both structured and semi-structured descriptive data.
-
----
-
-# View: panda_profiles_clean
-
-This view:
-
-* trims text
-* standardizes null values
-* converts "Unknown" to NULL
-* standardizes casing
-* prepares data for matching logic
-
-Purpose:
-Provides a clean dataset for all downstream views.
-
----
-
-# View: breadeable_pandas
-
-Determines which pandas are eligible for breeding.
-
-### Eligibility Rules
-
-* Panda must be alive
-* Age ≥ 5 years
-* Babies had ≤ 8
-
-Outputs:
-
-* source_id
-* name
-* sex
-* age_years
-* babies_had_count
-* eligible_rule
-* refreshed_at
-
-This is the first filtering layer.
-
----
-
-# View: matching_features
-
-This view converts messy panda data into structured matching signals.
-
-### Features Included
-
-* age_years
-* is_alive
-* is_breeding_age
-* babies_had_count
-* has_known_mother
-* has_known_father
-* has_known_lineage
-* has_personality_data
-* has_health_data
-* has_breeding_notes
-* has_parentage_data
-* notes_flag
-* data_quality_score
-* confidence_level
-* match_status
-
-### Data Quality Score
-
-Score is based on:
-
-* known parents
-* known lineage
-* personality data
-* health data
-* breeding notes
-
-This score represents how reliable the panda data is for matching.
-
----
-
-# View: candidate_pairs
-
-This view generates all possible panda pairs from the eligible pandas.
-
-### Pair Features
-
-* panda_1_id
-* panda_2_id
-* same_sex_flag
-* age_gap_years
-* same_lineage_flag
-* shares_known_parent_flag
-* loan_conflict_flag
-* pair_eligibility
-* pair_risk_reason
-* pair_score
-
-This is the pair generation layer where compatibility constraints are evaluated.
-
----
-
-# View: recommended_matches
-
-This view scores pairs based on compatibility rules.
-
-### Scoring Factors
-
-Score increases if:
-
-* Male panda is older than female
-* Personality tags overlap
-* Panda has zero babies and is breeding age
-* Pandas have high data quality scores
-
-Score decreases if:
-
-* Panda has more than 5 babies
-* Loan conflicts exist
-* Large age gaps
-* Low data quality
-
-This view produces a recommendation score for each pair.
-
----
-
-# View: directional_recommended_matches
-
-Pairs are converted into a directional format:
-
-Instead of:
-
-```
-Panda A + Panda B
+```text
+postgresql+psycopg://panda:panda@localhost:5432/panda_matching
 ```
 
-We create:
+## Setup
 
-```
-Panda A → Candidate Panda B
-Panda B → Candidate Panda A
-```
-
-This allows the system to easily answer:
-
-* “Who are the best matches for Bao Li?”
-* “Top matches for Long Long”
-* “Rank female matches for Xiao Qi Ji”
-
----
-
-# View: ranked_directional_recommended_matches_v2
-
-Explainable final recommendation layer.
-
-Adds v2 scoring artifacts:
-
-```
-final_score_v2
-recommendation_rank_v2
-score_breakdown_json
-top_positive_factors
-top_negative_factors
-```
-
-Ranking candidates per panda based on final v2 score.
-
-This is the preferred output for the agent/API.
-
----
-
-# Example Queries
-
-### Top matches for a panda
-
-```sql
-SELECT *
-FROM core.ranked_directional_recommended_matches
-WHERE focal_panda_name = 'Long Long'
-ORDER BY recommendation_rank;
-```
-
-### Top matches using explainable v2 score
-
-```sql
-SELECT *
-FROM core.ranked_directional_recommended_matches_v2
-WHERE focal_panda_name = 'Ai Bao'
-ORDER BY recommendation_rank_v2
-LIMIT 5;
-```
-
-### Top 5 matches for every panda
-
-```sql
-SELECT *
-FROM core.ranked_directional_recommended_matches
-WHERE recommendation_rank <= 5
-ORDER BY focal_panda_name, recommendation_rank;
-```
-
-### Best matches overall
-
-```sql
-SELECT *
-FROM core.ranked_directional_recommended_matches
-ORDER BY recommendation_score DESC
-LIMIT 20;
-```
-
-### Pandas with no recommendations
-
-```sql
-SELECT bp.*
-FROM core.breadeable_pandas bp
-LEFT JOIN (
-    SELECT DISTINCT focal_panda_id AS source_id
-    FROM core.ranked_directional_recommended_matches
-) rm
-ON bp.source_id = rm.source_id
-WHERE rm.source_id IS NULL;
-```
-
----
-
-# System Architecture Summary
-
-The database follows a layered recommendation system architecture:
-
-```
-Raw Data Layer
-    panda_profiles
-
-Data Cleaning Layer
-    panda_profiles_clean
-
-Eligibility Layer
-    breadeable_pandas
-
-Feature Engineering Layer
-    matching_features
-
-Pair Generation Layer
-    candidate_pairs
-
-Scoring Layer
-    recommended_matches
-
-Recommendation Layer
-    directional_recommended_matches
-
-Ranking Layer
-    ranked_directional_recommended_matches
-```
-
-This structure allows the system to be:
-
-* Explainable
-* Extendable
-* Queryable by an AI agent
-* Suitable for dashboards
-* Suitable for matching optimization
-
----
-
-# Refresh Pipeline Job
-
-The project includes an end-to-end refresh job script that updates source data and recomputes core derived fields.
-
-Script:
-
-```
-scripts/refresh_pipeline.sh
-```
-
-Steps executed:
-
-1. Apply latest migrations (`alembic upgrade head`)
-2. Sync latest pandas from source (`scripts/import_blackandwhitebear.py`)
-3. Sync descriptions, life journey, twin/personality/breeding/health enrichment (`scripts/sync_panda_descriptions.py`)
-4. Load curated profile overrides (`scripts/load_curated_profiles.py`)
-5. Recompute lineage groups (`scripts/recompute_lineage.py`)
-6. Extract text-derived feature vectors (`scripts/extract_text_features.py`)
-7. Compute explainable v2 pair scores (`scripts/compute_match_scores_v2.py`)
-8. Validate counts for:
-   - `core.panda_profiles`
-   - `core.breedeable_pandas`
-   - `core.ranked_directional_recommended_matches`
-   - `core.panda_profile_overrides`
-   - `core.panda_text_features`
-   - `core.match_scores_v2`
-
-Run manually:
+Start PostgreSQL:
 
 ```bash
-source .venv/bin/activate
-set -a; source .env; set +a
-./scripts/refresh_pipeline.sh
+docker compose up -d postgres
 ```
 
-Scheduling options:
+Install Python dependencies:
 
-* local `cron`
-* GitHub Actions (scheduled workflow)
-* Databricks Job (if you orchestrate from Databricks)
+```bash
+uv sync --extra dev
+```
 
----
+Set the database URL if you are not using the default:
 
-# Possible Future Improvements
+```bash
+export DATABASE_URL=postgresql+psycopg://panda:panda@localhost:5432/panda_matching
+```
 
-* Expand curated coverage beyond current famous-panda subset
-* Add previous-interaction signal from historical pairing outcomes
-* Add API auth and role-based access controls
-* Add regression evaluation suite for v1 vs v2 score stability
-* Add dashboard for v2 score component drift over time
+Apply migrations:
 
----
+```bash
+uv run alembic upgrade head
+```
 
-# API and Chat
+Run the full data refresh pipeline:
 
-Run API:
+```bash
+set -a; source .env; set +a
+uv run ./scripts/refresh_pipeline.sh
+```
+
+The refresh script applies migrations, imports panda profiles, syncs descriptions, loads curated overrides, recomputes lineage, extracts text features, computes v2 scores, and prints validation counts.
+
+## Run The API
 
 ```bash
 uv run panda-matching-api
@@ -449,236 +96,154 @@ uv run panda-matching-api
 
 Useful URLs:
 
-* `http://localhost:8000/health`
-* `http://localhost:8000/docs`
-* `http://localhost:8000/chat` (browser chat UI)
+- `http://localhost:8000/health`
+- `http://localhost:8000/docs`
+- `http://localhost:8000/chat`
 
-Main endpoints:
+Current API endpoints:
 
-* `GET /matches/top?panda_name=<name>&k=<n>`
-* `GET /matches/explain?focal_id=<id>&candidate_id=<id>`
-* `GET /matches/blockers?focal_id=<id>`
-* `POST /agent/chat`
+- `GET /health`
+- `GET /chat`
+- `GET /pandas`
+- `GET /matches/top?panda_name=<name>&k=<n>`
+- `GET /matches/explain?focal_id=<id>&candidate_id=<id>`
+- `GET /matches/blockers?focal_id=<id>`
+- `POST /agent/chat`
 
-## Conversational Mode (Databricks LLM)
-
-`POST /agent/chat` supports two modes:
-
-1. **LLM mode (preferred):** Databricks LLM plans tool calls and generates conversational responses.
-2. **Fallback mode:** existing deterministic regex/router logic executes if LLM is disabled or unavailable.
-
-This keeps factual answers grounded in your SQL pipeline while improving conversational quality.
-
-In practice, the chatbot now uses a **split-response architecture**:
-
-* **Deterministic rendering first** for simple and high-risk factual prompts:
-  * profile questions (`who is`, age, location, health, personality, fun facts)
-  * counts (`how many male pandas`, `how many eligible pandas`, total pandas, etc.)
-  * unsupported requests (`write me a poem`, weather, off-topic prompts)
-  * structured ranking/comparison prompts where the SQL output is already sufficient
-* **LLM-assisted responses** only where free-form reasoning is actually useful:
-  * richer top-match summaries
-  * pairwise match reasoning
-  * ranking explanations
-  * ambiguous or multi-step conversational prompts
-
-This design avoids hallucinations on straightforward factual answers while still letting the LLM improve the parts of the product that actually benefit from natural-language reasoning.
-
-The browser chat UI is now user-facing:
-
-* ranked matches are returned as readable summaries
-* profile and blocker answers are summarized in plain language
-* raw tool payloads are not shown in normal chat responses
-
-If you need raw structured output for debugging or integration, use the dedicated REST endpoints such as `GET /matches/top`, `GET /matches/explain`, and `GET /matches/blockers`.
-
-### Enable LLM mode
-
-Add these env vars to `.env` (or export in shell):
+## Run The React Frontend
 
 ```bash
-DATABRICKS_LLM_ENABLED=true
-DATABRICKS_HOST=https://dbc-831610b8-d4ee.cloud.databricks.com
-DATABRICKS_TOKEN=<your_token>
-DATABRICKS_LLM_ENDPOINT=databricks-meta-llama-3-3-70b-instruct
+cd frontend
+npm install
+npm run dev
 ```
 
-Then restart the API process.
+The Vite dev server proxies `/agent`, `/matches`, `/pandas`, and `/health` to `http://localhost:8000`, so run the FastAPI service first.
 
-### Recommended endpoint
-
-This project currently uses a Databricks-hosted foundation model endpoint rather than a custom endpoint you deploy yourself.
-
-Recommended value:
-
-* `DATABRICKS_LLM_ENDPOINT=databricks-meta-llama-3-3-70b-instruct`
-
-Notes:
-
-* `databricks-gpt-5-4-mini` may exist in the workspace but can still be unavailable to your user due to Databricks-side rate limiting.
-* If the configured endpoint cannot be invoked, the app logs the LLM failure and falls back to deterministic chat behavior.
-
-### Notes
-
-* LLM mode is optional. If `DATABRICKS_LLM_ENABLED=false`, chat remains fully rule-based.
-* Tool execution remains deterministic (`top_matches`, `blockers`, `explain_match`, etc.).
-* Chat memory is persisted in DB, so sessions survive restarts and multi-worker deployments.
-* If you are testing LLM mode, successful responses usually use intents prefixed with `llm_` such as `llm_top_matches`.
-* If Databricks returns `429 Too Many Requests`, the app logs the failure and falls back to deterministic routing and rendering instead of returning an empty answer.
-
----
-
-# Evaluation Starter
-
-The repo now includes both a **free full regression suite** and a **small paid LLM quality benchmark**.
-
-Files:
-
-* `data/evaluation/panda_chatbot_eval_v1.json` – full hybrid evaluation set for broad regression coverage
-* `data/evaluation/panda_chatbot_llm_benchmark_v1.json` – curated LLM quality benchmark set
-* `scripts/run_offline_regression_suite.py` – free programmatic regression suite
-* `scripts/create_mlflow_eval_dataset.py` – creates or updates an MLflow evaluation dataset using `mlflow.genai.datasets.create_dataset()`
-* `scripts/register_mlflow_scorers.py` – registers MLflow scorers
-* `scripts/run_baseline_eval.py` – runs MLflow `mlflow.genai.evaluate()` against a named dataset
-
-Recommended workflow:
-
-1. Install dev dependencies including MLflow:
+Build the frontend:
 
 ```bash
-uv sync --extra dev
+cd frontend
+npm run build
 ```
 
-2. Preview the starter dataset without calling MLflow:
+## Database Objects
 
-```bash
-uv run python scripts/create_mlflow_eval_dataset.py --dry-run
+The project uses the `core` schema for application tables and views. Main objects include:
+
+| Object | Type | Purpose |
+| --- | --- | --- |
+| `panda_profiles` | Table | Raw and enriched panda profile records, including photo metadata. |
+| `panda_profile_overrides` | Table | Curated agent-facing profile summaries, health notes, and personality tags. |
+| `panda_profiles_agent` | View | Merged raw + curated profile view used by the API and agent tools. |
+| `breedeable_pandas` | View | Current eligibility view used by the matching pipeline. The misspelling is legacy and still intentional in the database. |
+| `matching_features` | View | Profile-level matching and data quality features. |
+| `candidate_pairs` | View | Pair generation and compatibility blockers. |
+| `recommended_matches` | View | Original pair scoring layer. |
+| `directional_recommended_matches` | View | Pair results converted into focal/candidate rows. |
+| `ranked_directional_recommended_matches` | View | Original ranked recommendation output. |
+| `panda_text_features` | Table | Text-derived behavioral and health scoring features. |
+| `match_scores_v2` | Table | Explainable pair-level v2 scoring components. |
+| `ranked_directional_recommended_matches_v2` | View | Preferred ranked recommendation output with score breakdowns. |
+| `chat_sessions` | Table | One row per chat session. |
+| `chat_messages` | Table | Durable chat transcript. |
+| `chat_state` | Table | Session memory such as the last referenced panda. |
+
+## Matching Pipeline
+
+```text
+panda_profiles
+  -> panda_profiles_clean
+  -> panda_profiles_agent
+  -> breedeable_pandas
+  -> matching_features
+  -> candidate_pairs
+  -> recommended_matches
+  -> directional_recommended_matches
+  -> ranked_directional_recommended_matches
+  -> panda_text_features + match_scores_v2
+  -> ranked_directional_recommended_matches_v2
 ```
 
-3. Set your MLflow environment:
+Use the v2 ranked view for new product work when it exists. The API falls back to the original ranked view if the v2 view is unavailable.
 
-```bash
-export MLFLOW_TRACKING_URI=<your_tracking_uri>
-export MLFLOW_EXPERIMENT_ID=<your_experiment_id>
+Example query:
+
+```sql
+SELECT *
+FROM core.ranked_directional_recommended_matches_v2
+WHERE lower(focal_panda_name) = lower('Ai Bao')
+ORDER BY recommendation_rank_v2
+LIMIT 5;
 ```
 
-4. Create or update the evaluation dataset in MLflow:
+## Chat And LLM Mode
+
+`POST /agent/chat` always uses deterministic SQL-backed tools for data access. Optional Databricks LLM mode can plan or compose richer responses, but the router falls back to deterministic behavior if LLM mode is disabled, unavailable, or rate-limited.
+
+Enable LLM mode with:
 
 ```bash
-uv run python scripts/create_mlflow_eval_dataset.py
-```
-
-### Free full regression suite
-
-Use the offline suite for broad, cheap, repeatable regression checks:
-
-```bash
-uv run python scripts/run_offline_regression_suite.py --local-only
-```
-
-This suite avoids paid model calls and checks things like:
-
-* no exceptions
-* no raw JSON
-* no debug artifacts
-* non-empty answers
-* expected counts where labeled
-* expected names in ranking answers
-* pairwise winner matching
-* approximate age wording
-
-### Paid LLM quality benchmark
-
-Use the curated MLflow benchmark only for prompts where the LLM should add value:
-
-```bash
-set -a; source .env; set +a
-export OPENAI_API_KEY=<your_key>
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5051
-export MLFLOW_EXPERIMENT_ID=1
 export DATABRICKS_LLM_ENABLED=true
-
-uv run python scripts/run_baseline_eval.py \
-  --dataset-name panda_chatbot_llm_benchmark_v1 \
-  --max-examples 3 \
-  --run-name llm-benchmark-smoke \
-  --exclude-scorer panda_tool_call_correctness
+export DATABRICKS_HOST=https://<your-workspace-host>
+export DATABRICKS_TOKEN=<your-token>
+export DATABRICKS_LLM_ENDPOINT=databricks-meta-llama-3-3-70b-instruct
 ```
 
-The benchmark should be run in small batches if Databricks serving is rate-limited.
+Optional retry controls:
 
-The full regression dataset is intentionally hybrid:
+```bash
+export DATABRICKS_LLM_MAX_RETRIES=2
+export DATABRICKS_LLM_RETRY_BACKOFF_SECONDS=1.5
+export DATABRICKS_LLM_COOLDOWN_SECONDS=30
+```
 
-* some cases contain hard factual expectations such as count answers
-* others focus on behaviors such as grounding, concise ranked summaries, no raw JSON, and safe fallback behavior
+MLflow tracing can be configured with:
 
-Use these datasets as the initial benchmark, then add:
+```bash
+export MLFLOW_TRACKING_URI=<tracking-uri>
+export MLFLOW_EXPERIMENT_ID=<experiment-id>
+```
 
-* production failure cases from real traces
-* follow-up memory cases
-* unsupported or ambiguous requests
-* pairwise breeding-judgment questions you care about most
+## CLI
 
-### Current Evaluation Status
+The package exposes a small import CLI:
 
-Current repo status:
+```bash
+uv run panda-matching import --source <source-name> --file <path-to-json-or-jsonl>
+```
 
-* the free offline regression suite passes end to end
-* the curated paid LLM benchmark has been run successfully in batches
-* Databricks `429 Too Many Requests` made smaller benchmark batches necessary
-* deterministic routing now handles the core prompt classes that were previously unstable:
-  * profile questions
-  * count questions
-  * ranked top-match questions
-  * ranking explanations such as `why is X first/second`
-  * pairwise comparison and pair-opinion prompts
+For the Black and White Bear source and downstream scoring, use the scripts in `scripts/` or the full refresh pipeline.
 
-Practical takeaway:
+## Testing And Evaluation
 
-* use the free local regression suite as the broad guardrail
-* use the curated paid benchmark in small batches for quality checks on reasoning-heavy prompts
+Run the unit tests:
 
-### One-command runs
+```bash
+uv run pytest
+```
 
-There is now a small `Makefile` wrapper for the two main evaluation paths.
+Run linting:
 
-Free regression suite:
+```bash
+uv run ruff check .
+```
+
+Run the free offline regression suite:
 
 ```bash
 make eval-free
 ```
 
-Paid MLflow benchmark:
+Run the optional paid LLM benchmark:
 
 ```bash
-DATASET=panda_chatbot_llm_benchmark_remaining_batch2 \
-RUN_NAME=llm-benchmark-batch2 \
-make eval-paid
+DATASET=panda_chatbot_llm_benchmark_v1 RUN_NAME=llm-benchmark-smoke make eval-paid
 ```
 
-Notes:
+The paid benchmark requires `OPENAI_API_KEY`, `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT_ID`, and LLM mode environment variables. See `docs/evaluation.md` for more detail.
 
-* `make eval-free` does not use paid judge calls
-* `make eval-paid` expects your environment to already include:
-  * `OPENAI_API_KEY`
-  * `MLFLOW_TRACKING_URI`
-  * `MLFLOW_EXPERIMENT_ID`
-  * `DATABRICKS_LLM_ENABLED=true`
-* if `DATASET` is not provided, `make eval-paid` defaults to `panda_chatbot_llm_benchmark_v1`
+## Notes
 
----
-
-# Final Note
-
-This project is not just a database.
-It is a **rule-based recommendation system implemented in SQL** for panda breeding compatibility.
-
-The database transforms raw panda information into ranked partner recommendations using eligibility rules, compatibility constraints, behavioral data, and data quality scoring.
-
----
-
-If this is for GitHub, name the file:
-
-```
-README.md
-```
+- The local `mlflow.db`, `mlartifacts/`, `tmp/`, and Python/Node build artifacts are development outputs, not source code.
+- This project is a prototype decision-support system. Recommendations should be treated as explainable software outputs, not biological or veterinary authority.
